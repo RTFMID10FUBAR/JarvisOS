@@ -1,0 +1,28 @@
+name: Publish Wiki
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish Wiki
+        env:
+          WIKI_REPO: RTFMID10FUBAR/JarvisOS.wiki.git
+          SSH_KEY: ${{ secrets.WIKI_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+          git clone git@github.com:$WIKI_REPO wiki
+          rsync -a docs/ wiki/
+          cd wiki
+          git add .
+          git commit -m "🧠 Auto wiki sync" || true
+          git push
