@@ -1,7 +1,7 @@
 import { Globe, AlertTriangle, Monitor, Shield, Cookie, Fingerprint, Info, Settings, PlusCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { SectionHeader, StatusBadge, EmptyState } from '../components';
-import type { ServiceStatus } from '../components';
+import type { ServiceStatus } from '../types';
 
 // ---------------------------------------------------------------------------
 // Types

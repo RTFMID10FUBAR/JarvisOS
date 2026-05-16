@@ -1,4 +1,5 @@
-import { useState, FormEvent } from 'react';
+import { useState } from 'react';
+import type { FormEvent } from 'react';
 import {
   Users,
   Info,
@@ -17,7 +18,7 @@ import {
   CopyButton,
 } from '../components';
 import type { PeopleResult } from '../types';
-import { exportJSON, exportCSV } from '../utils/export';
+import { exportJSON } from '../utils/export';
 
 interface SearchForm {
   firstName: string;

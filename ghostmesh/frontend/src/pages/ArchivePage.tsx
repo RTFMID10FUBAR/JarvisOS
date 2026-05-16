@@ -1,4 +1,5 @@
-import { useState, FormEvent } from 'react';
+import { useState } from 'react';
+import type { FormEvent } from 'react';
 import { Archive, ExternalLink, Calendar, Info, Download } from 'lucide-react';
 import { SectionHeader, Spinner, EmptyState } from '../components';
 
