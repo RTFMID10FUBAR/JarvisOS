@@ -20,12 +20,17 @@ app.add_middleware(
 START_TIME = time.time()
 
 ENGINES = {
-    "duckduckgo": {"name": "DuckDuckGo", "requires_key": False, "env_var": None},
-    "searxng": {"name": "SearXNG", "requires_key": False, "env_var": "SEARXNG_URL"},
-    "shodan": {"name": "Shodan", "requires_key": True, "env_var": "SHODAN_API_KEY"},
-    "virustotal": {"name": "VirusTotal", "requires_key": True, "env_var": "VT_API_KEY"},
-    "haveibeenpwned": {"name": "HaveIBeenPwned", "requires_key": True, "env_var": "HIBP_API_KEY"},
-    "hunter": {"name": "Hunter.io", "requires_key": True, "env_var": "HUNTER_API_KEY"},
+    "duckduckgo":     {"name": "DuckDuckGo",    "requires_key": False, "env_var": None},
+    "marginalia":     {"name": "Marginalia",     "requires_key": False, "env_var": None},
+    "urlscan":        {"name": "URLScan.io",     "requires_key": False, "env_var": None},
+    "crtsh":          {"name": "Crt.sh",         "requires_key": False, "env_var": None},
+    "searxng":        {"name": "SearXNG",        "requires_key": False, "env_var": "SEARXNG_URL"},
+    "brave":          {"name": "Brave Search",   "requires_key": True,  "env_var": "BRAVE_SEARCH_API_KEY"},
+    "otx":            {"name": "AlienVault OTX", "requires_key": True,  "env_var": "OTX_API_KEY"},
+    "shodan":         {"name": "Shodan",         "requires_key": True,  "env_var": "SHODAN_API_KEY"},
+    "virustotal":     {"name": "VirusTotal",     "requires_key": True,  "env_var": "VT_API_KEY"},
+    "haveibeenpwned": {"name": "HaveIBeenPwned", "requires_key": True,  "env_var": "HIBP_API_KEY"},
+    "hunter":         {"name": "Hunter.io",      "requires_key": True,  "env_var": "HUNTER_API_KEY"},
 }
 
 
@@ -89,24 +94,46 @@ async def search(body: SearchQuery):
     engines_failed = []
     start = time.time()
 
-    if "duckduckgo" in body.engines:
+    async def _run(engine_id: str, coro):
         try:
-            ddg_results = await search_duckduckgo(body.query, body.max_results)
-            results.extend(ddg_results)
-            engines_used.append("duckduckgo")
+            res = await coro
+            results.extend(res)
+            engines_used.append(engine_id)
         except Exception:
-            engines_failed.append("duckduckgo")
+            engines_failed.append(engine_id)
+
+    if "duckduckgo" in body.engines:
+        await _run("duckduckgo", search_duckduckgo(body.query, body.max_results))
+
+    if "marginalia" in body.engines:
+        await _run("marginalia", search_marginalia(body.query, body.max_results))
+
+    if "urlscan" in body.engines:
+        await _run("urlscan", search_urlscan(body.query, body.max_results))
+
+    if "crtsh" in body.engines:
+        await _run("crtsh", search_crtsh(body.query, body.max_results))
 
     searxng_url = os.getenv("SEARXNG_URL")
-    if "searxng" in body.engines and searxng_url:
-        try:
-            sx_results = await search_searxng(body.query, searxng_url, body.max_results)
-            results.extend(sx_results)
-            engines_used.append("searxng")
-        except Exception:
+    if "searxng" in body.engines:
+        if searxng_url:
+            await _run("searxng", search_searxng(body.query, searxng_url, body.max_results))
+        else:
             engines_failed.append("searxng")
-    elif "searxng" in body.engines:
-        engines_failed.append("searxng")
+
+    brave_key = os.getenv("BRAVE_SEARCH_API_KEY")
+    if "brave" in body.engines:
+        if brave_key:
+            await _run("brave", search_brave(body.query, brave_key, body.max_results))
+        else:
+            engines_failed.append("brave")
+
+    otx_key = os.getenv("OTX_API_KEY")
+    if "otx" in body.engines:
+        if otx_key:
+            await _run("otx", search_otx(body.query, otx_key, body.max_results))
+        else:
+            engines_failed.append("otx")
 
     duration_ms = int((time.time() - start) * 1000)
     return {
@@ -178,6 +205,156 @@ async def search_searxng(query: str, base_url: str, max_results: int) -> list[di
                 "confidence": 70,
                 "tags": item.get("tags", []),
                 "category": item.get("category", "general"),
+                "archived": False,
+            })
+        return results
+
+
+async def search_marginalia(query: str, max_results: int) -> list[dict]:
+    """Marginalia Search — independent web index, no key required."""
+    import urllib.parse
+    encoded = urllib.parse.quote(query)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"https://api.marginalia.nu/search/{encoded}",
+            headers={"Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results: list[dict] = []
+        for i, item in enumerate(data.get("results", [])[:max_results]):
+            results.append({
+                "id": f"mg-{i}",
+                "title": item.get("title") or item.get("url", ""),
+                "snippet": item.get("description") or "",
+                "url": item.get("url", ""),
+                "source_engine": "marginalia",
+                "timestamp": None,
+                "confidence": 65,
+                "tags": ["web"],
+                "category": "general",
+                "archived": False,
+            })
+        return results
+
+
+async def search_urlscan(query: str, max_results: int) -> list[dict]:
+    """URLScan.io public search — no key required for public results."""
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        resp = await client.get(
+            "https://urlscan.io/api/v1/search/",
+            params={"q": query, "size": min(max_results, 100)},
+            headers={"Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results: list[dict] = []
+        for i, item in enumerate(data.get("results", [])[:max_results]):
+            page = item.get("page", {})
+            results.append({
+                "id": f"us-{i}",
+                "title": page.get("title") or page.get("domain", query),
+                "snippet": f"Scanned: {page.get('url', '')} — {page.get('domain', '')}",
+                "url": item.get("result", page.get("url", "")),
+                "source_engine": "urlscan",
+                "timestamp": item.get("task", {}).get("time"),
+                "confidence": 70,
+                "tags": ["url", "scan"],
+                "category": "security",
+                "archived": False,
+            })
+        return results
+
+
+async def search_crtsh(query: str, max_results: int) -> list[dict]:
+    """Crt.sh certificate transparency search — no key required."""
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        resp = await client.get(
+            "https://crt.sh/",
+            params={"q": query, "output": "json"},
+            headers={"Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        seen: set[str] = set()
+        results: list[dict] = []
+        for item in data[:max_results * 3]:
+            name = item.get("name_value", "")
+            for domain in name.split("\n"):
+                domain = domain.strip().lstrip("*.")
+                if domain and domain not in seen:
+                    seen.add(domain)
+                    results.append({
+                        "id": f"crt-{len(results)}",
+                        "title": domain,
+                        "snippet": (
+                            f"Issuer: {item.get('issuer_name', 'unknown')} — "
+                            f"Logged: {item.get('entry_timestamp', '')[:10]}"
+                        ),
+                        "url": f"https://crt.sh/?q={domain}",
+                        "source_engine": "crtsh",
+                        "timestamp": item.get("entry_timestamp"),
+                        "confidence": 75,
+                        "tags": ["certificate", "domain"],
+                        "category": "infrastructure",
+                        "archived": False,
+                    })
+                    if len(results) >= max_results:
+                        break
+            if len(results) >= max_results:
+                break
+        return results
+
+
+async def search_brave(query: str, api_key: str, max_results: int) -> list[dict]:
+    """Brave Search API — requires BRAVE_SEARCH_API_KEY."""
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        resp = await client.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": query, "count": min(max_results, 20)},
+            headers={"Accept": "application/json", "X-Subscription-Token": api_key},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results: list[dict] = []
+        for i, item in enumerate(data.get("web", {}).get("results", [])[:max_results]):
+            results.append({
+                "id": f"bv-{i}",
+                "title": item.get("title", ""),
+                "snippet": item.get("description", ""),
+                "url": item.get("url", ""),
+                "source_engine": "brave",
+                "timestamp": item.get("age"),
+                "confidence": 75,
+                "tags": ["web"],
+                "category": "general",
+                "archived": False,
+            })
+        return results
+
+
+async def search_otx(query: str, api_key: str, max_results: int) -> list[dict]:
+    """AlienVault OTX threat intelligence search — requires OTX_API_KEY."""
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        resp = await client.get(
+            "https://otx.alienvault.com/api/v1/search/pulses",
+            params={"q": query, "page_size": min(max_results, 20)},
+            headers={"X-OTX-API-KEY": api_key, "Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results: list[dict] = []
+        for i, item in enumerate(data.get("results", [])[:max_results]):
+            results.append({
+                "id": f"otx-{i}",
+                "title": item.get("name", ""),
+                "snippet": item.get("description", "")[:200],
+                "url": f"https://otx.alienvault.com/pulse/{item.get('id', '')}",
+                "source_engine": "otx",
+                "timestamp": item.get("created"),
+                "confidence": 72,
+                "tags": item.get("tags", [])[:5],
+                "category": "threat-intel",
                 "archived": False,
             })
         return results
