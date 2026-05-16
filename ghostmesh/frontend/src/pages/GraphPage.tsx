@@ -543,6 +543,7 @@ function GraphCanvas({ nodes, edges, selectedId, onSelectNode, onMoveNode }: Gra
           const ex1 = x1 + (dx / dist) * NODE_RADIUS;
           const ey1 = y1 + (dy / dist) * NODE_RADIUS;
           const ex2 = x2 - (dx / dist) * (NODE_RADIUS + 8); // room for arrowhead
+          const localEy2 = y2 - (dy / dist) * (NODE_RADIUS + 8);
 
           const mx = (x1 + x2) / 2;
           const my = (y1 + y2) / 2;
@@ -553,7 +554,7 @@ function GraphCanvas({ nodes, edges, selectedId, onSelectNode, onMoveNode }: Gra
                 x1={ex1}
                 y1={ey1}
                 x2={ex2}
-                y2={ey2}
+                y2={localEy2}
                 stroke="var(--gm-border)"
                 strokeWidth={1.5}
                 markerEnd="url(#arrowhead)"
@@ -637,9 +638,6 @@ function GraphCanvas({ nodes, edges, selectedId, onSelectNode, onMoveNode }: Gra
     </div>
   );
 }
-
-// Extend SVG line to accept ey2 (workaround for shortening calculation)
-const ey2 = 0; // will be overridden inside the render
 
 // ---------------------------------------------------------------------------
 // GraphPage
