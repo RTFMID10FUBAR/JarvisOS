@@ -408,5 +408,151 @@ async def search_archive(body: ArchiveQuery):
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+
+
+# ---------------------------------------------------------------------------
+# People search — passive username & domain lookup
+# ---------------------------------------------------------------------------
+
+PLATFORM_CHECKS = [
+    {"name": "GitHub",        "url": "https://github.com/{}",                      "cat": "code"},
+    {"name": "GitLab",        "url": "https://gitlab.com/{}",                      "cat": "code"},
+    {"name": "Twitter/X",     "url": "https://x.com/{}",                           "cat": "social"},
+    {"name": "Reddit",        "url": "https://www.reddit.com/user/{}",             "cat": "social"},
+    {"name": "Instagram",     "url": "https://www.instagram.com/{}/",              "cat": "social"},
+    {"name": "TikTok",        "url": "https://www.tiktok.com/@{}",                 "cat": "social"},
+    {"name": "YouTube",       "url": "https://www.youtube.com/@{}",                "cat": "video"},
+    {"name": "Twitch",        "url": "https://www.twitch.tv/{}",                   "cat": "streaming"},
+    {"name": "LinkedIn",      "url": "https://www.linkedin.com/in/{}",             "cat": "professional"},
+    {"name": "Pinterest",     "url": "https://www.pinterest.com/{}/",              "cat": "social"},
+    {"name": "Medium",        "url": "https://medium.com/@{}",                     "cat": "blog"},
+    {"name": "Dev.to",        "url": "https://dev.to/{}",                          "cat": "tech"},
+    {"name": "Keybase",       "url": "https://keybase.io/{}",                      "cat": "identity"},
+    {"name": "HackerNews",    "url": "https://news.ycombinator.com/user?id={}",    "cat": "tech"},
+    {"name": "Mastodon",      "url": "https://mastodon.social/@{}",                "cat": "social"},
+    {"name": "Gravatar",      "url": "https://gravatar.com/{}",                    "cat": "identity"},
+    {"name": "Flickr",        "url": "https://www.flickr.com/people/{}",           "cat": "photos"},
+    {"name": "Tumblr",        "url": "https://{}.tumblr.com",                      "cat": "blog"},
+    {"name": "Telegram",      "url": "https://t.me/{}",                            "cat": "messaging"},
+    {"name": "Steam",         "url": "https://steamcommunity.com/id/{}",           "cat": "gaming"},
+]
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (compatible; GhostMesh/0.1; +https://github.com/RTFMID10FUBAR/JarvisOS)"
+    )
+}
+
+
+async def _check_platform(client: httpx.AsyncClient, platform: dict, username: str) -> dict | None:
+    url = platform["url"].format(username)
+    try:
+        resp = await client.head(url, follow_redirects=True, timeout=6.0)
+        found = resp.status_code in (200, 301, 302)
+        if not found and resp.status_code == 405:
+            resp2 = await client.get(url, follow_redirects=True, timeout=6.0)
+            found = resp2.status_code == 200
+        if found:
+            return {
+                "platform": platform["name"],
+                "url": url,
+                "username": username,
+                "category": platform["cat"],
+                "verified": False,
+                "http_status": resp.status_code,
+            }
+    except Exception:
+        pass
+    return None
+
+
+class PeopleQuery(BaseModel):
+    first_name: str = ""
+    last_name: str = ""
+    username: str = ""
+    email: str = ""
+    phone: str = ""
+    domain: str = ""
+    location: str = ""
+
+
+@app.post("/api/people/search")
+async def people_search(body: PeopleQuery):
+    profiles: list[dict] = []
+    matched_fields: list[str] = []
+    sources: list[str] = []
+
+    # Username lookup across platforms
+    uname = body.username.lstrip("@").strip()
+    if uname:
+        matched_fields.append("username")
+        async with httpx.AsyncClient(headers=HEADERS) as client:
+            tasks = [_check_platform(client, p, uname) for p in PLATFORM_CHECKS]
+            import asyncio
+            results_raw = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results_raw:
+            if isinstance(r, dict):
+                profiles.append(r)
+                sources.append(r["platform"])
+
+    # Domain / crt.sh lookup
+    domain = body.domain.strip() or (body.email.split("@")[-1].strip() if "@" in body.email else "")
+    crt_results: list[dict] = []
+    if domain:
+        if body.domain:
+            matched_fields.append("domain")
+        if body.email:
+            matched_fields.append("email")
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://crt.sh/",
+                    params={"q": domain, "output": "json"},
+                    headers={"Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                crt_data = resp.json()
+                seen: set[str] = set()
+                for item in crt_data[:20]:
+                    for sub in item.get("name_value", "").split("\n"):
+                        sub = sub.strip()
+                        if sub and sub not in seen and not sub.startswith("*"):
+                            seen.add(sub)
+                            crt_results.append({
+                                "platform": "Certificate Transparency",
+                                "url": f"https://crt.sh/?q={sub}",
+                                "username": sub,
+                                "category": "infrastructure",
+                                "verified": False,
+                                "http_status": 200,
+                            })
+                sources.append("Crt.sh")
+        except Exception:
+            pass
+
+    # Name-based fields tracking
+    if body.first_name or body.last_name:
+        matched_fields.append("name")
+    if body.phone:
+        matched_fields.append("phone")
+    if body.location:
+        matched_fields.append("location")
+
+    all_profiles = profiles + crt_results
+    confidence = min(30 + len(all_profiles) * 4 + len(matched_fields) * 8, 95)
+
+    name_parts = [body.first_name, body.last_name]
+    display_name = " ".join(p for p in name_parts if p).strip() or uname or domain or "Unknown"
+
+    return {
+        "id": f"result-{int(time.time())}",
+        "name": display_name,
+        "confidence": confidence,
+        "matched_fields": list(set(matched_fields)) or ["query"],
+        "profiles": all_profiles,
+        "sources_checked": sources,
+        "last_checked": datetime.now(timezone.utc).isoformat(),
+        "platforms_found": len(profiles),
+        "platforms_checked": len(PLATFORM_CHECKS),
+    }
