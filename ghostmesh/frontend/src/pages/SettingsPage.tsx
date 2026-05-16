@@ -1,131 +1,198 @@
 import { useState } from 'react';
-import { Settings, Key, CheckCircle2, AlertCircle, Eye, EyeOff, Save, RefreshCw } from 'lucide-react';
+import {
+  Settings,
+  Activity,
+  ClipboardList,
+  Info,
+  RefreshCw,
+  Copy,
+  Check,
+  CheckCircle2,
+  AlertCircle,
+  Terminal,
+  ChevronDown,
+  ChevronRight,
+  Trash2,
+  Server,
+  Clock,
+  Layers,
+  ShieldCheck,
+} from 'lucide-react';
 import { useHealth } from '../hooks/useHealth';
+import { SectionHeader } from '../components/SectionHeader';
+import { StatusBadge } from '../components/StatusBadge';
+import { CopyButton } from '../components/CopyButton';
+import type { ServiceStatus } from '../types';
 
-interface ApiKeyField {
+// ── Engine definitions ─────────────────────────────────────────────────────
+
+interface EngineConfig {
   id: string;
-  label: string;
-  envVar: string;
-  description: string;
-  docsUrl: string;
+  name: string;
+  requiresKey: boolean;
+  envVar: string | null;
+  note: string;
 }
 
-const API_KEY_FIELDS: ApiKeyField[] = [
+const ENGINES: EngineConfig[] = [
+  {
+    id: 'duckduckgo',
+    name: 'DuckDuckGo',
+    requiresKey: false,
+    envVar: null,
+    note: 'No API key required. Uses the public DuckDuckGo Instant Answer API.',
+  },
+  {
+    id: 'searxng',
+    name: 'SearXNG',
+    requiresKey: false,
+    envVar: 'SEARXNG_URL',
+    note: 'Self-hosted SearXNG instance. Set SEARXNG_URL to your instance URL.',
+  },
   {
     id: 'shodan',
-    label: 'Shodan',
+    name: 'Shodan',
+    requiresKey: true,
     envVar: 'SHODAN_API_KEY',
-    description: 'Required for IP/host intelligence and device search.',
-    docsUrl: 'https://developer.shodan.io/',
+    note: 'IP intelligence, open ports, banner data. Requires a Shodan account.',
   },
   {
     id: 'virustotal',
-    label: 'VirusTotal',
+    name: 'VirusTotal',
+    requiresKey: true,
     envVar: 'VT_API_KEY',
-    description: 'Required for file/URL/hash reputation lookups.',
-    docsUrl: 'https://developers.virustotal.com/',
-  },
-  {
-    id: 'hunter',
-    label: 'Hunter.io',
-    envVar: 'HUNTER_API_KEY',
-    description: 'Required for email finding and verification.',
-    docsUrl: 'https://hunter.io/api',
+    note: 'File, URL, and hash reputation analysis from 70+ AV engines.',
   },
   {
     id: 'haveibeenpwned',
-    label: 'HaveIBeenPwned',
+    name: 'HaveIBeenPwned',
+    requiresKey: true,
     envVar: 'HIBP_API_KEY',
-    description: 'Required for breach database lookups.',
-    docsUrl: 'https://haveibeenpwned.com/API/v3',
+    note: 'Breach database lookups. Requires a paid HIBP API plan.',
   },
   {
-    id: 'google_cse',
-    label: 'Google CSE',
-    envVar: 'GOOGLE_CSE_KEY',
-    description: 'Custom Search Engine key for Google results.',
-    docsUrl: 'https://developers.google.com/custom-search/',
+    id: 'hunter',
+    name: 'Hunter.io',
+    requiresKey: true,
+    envVar: 'HUNTER_API_KEY',
+    note: 'Email discovery and verification for a given domain.',
   },
 ];
 
-interface KeyValues {
-  [key: string]: string;
+// ── Audit log ──────────────────────────────────────────────────────────────
+
+const AUDIT_LS_KEY = 'gm-audit-log';
+
+interface AuditEntry {
+  id: string;
+  action: string;
+  query?: string;
+  timestamp: string;
+  result_count?: number;
+  engine?: string;
 }
 
-interface ShowKeys {
-  [key: string]: boolean;
+function loadAuditLog(): AuditEntry[] {
+  try {
+    const raw = localStorage.getItem(AUDIT_LS_KEY);
+    if (raw) return JSON.parse(raw) as AuditEntry[];
+  } catch { /* ignore */ }
+  return [];
 }
 
-function Label({ children }: { children: React.ReactNode }) {
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function formatUptime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleString('en-US', {
+    month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', second: '2-digit',
+  });
+}
+
+// ── Tab button ─────────────────────────────────────────────────────────────
+
+function TabBtn({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ElementType;
+  label: string;
+}) {
   return (
-    <span
+    <button
+      onClick={onClick}
       style={{
-        fontSize: '11px',
-        fontWeight: 600,
-        textTransform: 'uppercase',
-        letterSpacing: '0.06em',
-        color: 'var(--gm-text-muted)',
-        display: 'block',
-        marginBottom: '6px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '6px 14px',
+        borderRadius: '6px',
+        border: 'none',
+        cursor: 'pointer',
+        fontSize: '13px',
+        fontWeight: active ? 600 : 400,
+        background: active ? 'rgba(47,129,247,0.15)' : 'transparent',
+        color: active ? 'var(--gm-accent)' : 'var(--gm-text-secondary)',
+        transition: 'all 0.15s',
+        whiteSpace: 'nowrap',
       }}
     >
-      {children}
-    </span>
+      <Icon size={14} />
+      {label}
+    </button>
   );
 }
 
+// ── Info row ───────────────────────────────────────────────────────────────
+
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '8px 0',
+        borderBottom: '1px solid var(--gm-border)',
+        fontSize: '13px',
+      }}
+    >
+      <span style={{ color: 'var(--gm-text-muted)' }}>{label}</span>
+      <span style={{ color: 'var(--gm-text-primary)', fontWeight: 500 }}>{value}</span>
+    </div>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────
+
+type Tab = 'engine_config' | 'diagnostics' | 'audit_log' | 'about';
+
 export function SettingsPage() {
-  const { data: health, refetch } = useHealth();
-  const [keyValues, setKeyValues] = useState<KeyValues>({});
-  const [showKeys, setShowKeys] = useState<ShowKeys>({});
-  const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
-  const [activeSection, setActiveSection] = useState<'general' | 'api_keys' | 'diagnostics'>('general');
-
-  const missingEnvVars = new Set(health?.missing_env_vars ?? []);
-
-  function toggleShow(id: string) {
-    setShowKeys((prev) => ({ ...prev, [id]: !prev[id] }));
-  }
-
-  function saveKey(field: ApiKeyField) {
-    // In a real app, this would POST to the API; here we just mark as "saved" in UI
-    setSavedKeys((prev) => new Set([...prev, field.id]));
-    setTimeout(() => {
-      setSavedKeys((prev) => {
-        const next = new Set(prev);
-        next.delete(field.id);
-        return next;
-      });
-    }, 2000);
-  }
-
-  const tabStyle = (tab: string): React.CSSProperties => ({
-    padding: '6px 14px',
-    borderRadius: '6px',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: '13px',
-    fontWeight: activeSection === tab ? 600 : 400,
-    background: activeSection === tab ? 'rgba(47,129,247,0.15)' : 'transparent',
-    color: activeSection === tab ? 'var(--gm-accent)' : 'var(--gm-text-secondary)',
-    transition: 'all 0.15s',
-  });
+  const [tab, setTab] = useState<Tab>('engine_config');
+  const { data: health, refetch, isFetching } = useHealth();
 
   return (
-    <div style={{ maxWidth: '720px' }}>
-      <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <Settings size={20} color="var(--gm-accent)" />
-        <div>
-          <h1 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--gm-text-primary)' }}>
-            Settings
-          </h1>
-          <p style={{ margin: 0, fontSize: '13px', color: 'var(--gm-text-muted)' }}>
-            Configuration, API keys, and diagnostics
-          </p>
-        </div>
-      </div>
+    <div style={{ maxWidth: '780px' }}>
+      <SectionHeader
+        icon={Settings}
+        title="Settings"
+        subtitle="Engine configuration, diagnostics, audit log, and about"
+      />
 
-      {/* Tab nav */}
+      {/* Tab bar */}
       <div
         style={{
           display: 'flex',
@@ -134,281 +201,608 @@ export function SettingsPage() {
           background: 'var(--gm-bg-card)',
           border: '1px solid var(--gm-border)',
           borderRadius: '8px',
-          marginBottom: '20px',
+          marginBottom: '24px',
           width: 'fit-content',
+          flexWrap: 'wrap',
         }}
       >
-        <button style={tabStyle('general')} onClick={() => setActiveSection('general')}>General</button>
-        <button style={tabStyle('api_keys')} onClick={() => setActiveSection('api_keys')}>API Keys</button>
-        <button style={tabStyle('diagnostics')} onClick={() => setActiveSection('diagnostics')}>Diagnostics</button>
+        <TabBtn active={tab === 'engine_config'} onClick={() => setTab('engine_config')} icon={Layers}       label="Engine Config" />
+        <TabBtn active={tab === 'diagnostics'}   onClick={() => setTab('diagnostics')}   icon={Activity}     label="Diagnostics" />
+        <TabBtn active={tab === 'audit_log'}     onClick={() => setTab('audit_log')}     icon={ClipboardList} label="Audit Log" />
+        <TabBtn active={tab === 'about'}         onClick={() => setTab('about')}         icon={Info}         label="About" />
       </div>
 
-      {/* General */}
-      {activeSection === 'general' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div className="gm-card">
-            <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--gm-text-primary)', marginBottom: '16px' }}>
-              Application
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div>
-                <Label>Default recon mode</Label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {['passive', 'active'].map((m) => (
-                    <button
-                      key={m}
-                      style={{
-                        padding: '6px 16px',
-                        borderRadius: '6px',
-                        border: '1px solid',
-                        borderColor: m === 'passive' ? 'var(--gm-accent)' : 'var(--gm-border)',
-                        background: m === 'passive' ? 'rgba(47,129,247,0.12)' : 'transparent',
-                        color: m === 'passive' ? 'var(--gm-accent)' : 'var(--gm-text-muted)',
-                        fontSize: '13px',
-                        fontWeight: m === 'passive' ? 600 : 400,
-                        cursor: 'pointer',
-                        textTransform: 'capitalize',
-                      }}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <Label>Max results per query</Label>
-                <select
-                  className="gm-input"
-                  defaultValue="50"
-                  style={{ maxWidth: '200px', appearance: 'none' }}
-                >
-                  <option value="10">10</option>
-                  <option value="25">25</option>
-                  <option value="50">50</option>
-                  <option value="100">100</option>
-                </select>
-              </div>
-              <div>
-                <Label>Theme</Label>
-                <select
-                  className="gm-input"
-                  defaultValue="dark"
-                  style={{ maxWidth: '200px', appearance: 'none' }}
-                >
-                  <option value="dark">Dark (default)</option>
-                  <option value="darker">Darker</option>
-                </select>
-              </div>
-            </div>
-          </div>
+      {tab === 'engine_config' && <EngineConfigTab health={health} />}
+      {tab === 'diagnostics'   && <DiagnosticsTab health={health} refetch={refetch} isFetching={isFetching} />}
+      {tab === 'audit_log'     && <AuditLogTab />}
+      {tab === 'about'         && <AboutTab />}
+    </div>
+  );
+}
 
-          <div className="gm-card">
-            <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--gm-text-primary)', marginBottom: '12px' }}>
-              Data &amp; Privacy
-            </div>
-            <p style={{ fontSize: '13px', color: 'var(--gm-text-secondary)', margin: '0 0 12px', lineHeight: 1.5 }}>
-              GhostMesh stores search history locally in your browser. No data is sent to external servers unless
-              you explicitly trigger a search through a configured engine.
-            </p>
-            <button
-              className="gm-btn gm-btn-danger"
-              style={{ fontSize: '12px' }}
-              onClick={() => {
-                localStorage.clear();
-                window.location.reload();
-              }}
-            >
-              Clear Local Data
-            </button>
-          </div>
-        </div>
-      )}
+// ── Engine Config Tab ──────────────────────────────────────────────────────
 
-      {/* API Keys */}
-      {activeSection === 'api_keys' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+function EngineConfigTab({ health }: { health: ReturnType<typeof useHealth>['data'] }) {
+  const configuredSet = new Set(health?.configured_engines ?? []);
+  const missingSet    = new Set(health?.missing_env_vars ?? []);
+
+  function engineStatus(eng: EngineConfig): ServiceStatus {
+    if (!eng.requiresKey && !eng.envVar) return 'online';
+    if (eng.envVar && missingSet.has(eng.envVar)) return 'degraded';
+    if (configuredSet.has(eng.id)) return 'online';
+    return 'degraded';
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      {/* Note banner */}
+      <div
+        style={{
+          padding: '10px 14px',
+          background: 'rgba(47,129,247,0.06)',
+          border: '1px solid rgba(47,129,247,0.2)',
+          borderRadius: '6px',
+          fontSize: '13px',
+          color: 'var(--gm-text-secondary)',
+          lineHeight: 1.6,
+          marginBottom: '4px',
+        }}
+      >
+        API keys are configured via environment variables on the backend. Edit the{' '}
+        <code style={{ fontFamily: 'monospace', color: 'var(--gm-accent)', fontSize: '12px' }}>.env</code>{' '}
+        file and restart the backend service.
+      </div>
+
+      {ENGINES.map((eng) => {
+        const status = engineStatus(eng);
+        const isConfigured = status === 'online';
+
+        return (
           <div
-            style={{
-              padding: '10px 14px',
-              background: 'rgba(47,129,247,0.06)',
-              border: '1px solid rgba(47,129,247,0.2)',
-              borderRadius: '6px',
-              fontSize: '13px',
-              color: 'var(--gm-text-secondary)',
-              lineHeight: 1.5,
-            }}
+            key={eng.id}
+            className="gm-card"
+            style={{ padding: '14px 16px' }}
           >
-            API keys are stored in environment variables on the backend. Set them in your{' '}
-            <code style={{ fontFamily: 'monospace', color: 'var(--gm-accent)' }}>.env</code> file and
-            restart the server.
-          </div>
-          {API_KEY_FIELDS.map((field) => {
-            const isMissing = missingEnvVars.has(field.envVar);
-            const val = keyValues[field.id] ?? '';
-            const isSaved = savedKeys.has(field.id);
-            return (
-              <div key={field.id} className="gm-card">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-                  <Key size={14} color={isMissing ? 'var(--gm-yellow)' : 'var(--gm-teal)'} />
-                  <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--gm-text-primary)', flex: 1 }}>
-                    {field.label}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+              {/* Status indicator */}
+              <div
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: isConfigured ? 'var(--gm-teal)' : 'var(--gm-yellow)',
+                  marginTop: '5px',
+                  flexShrink: 0,
+                }}
+              />
+
+              {/* Content */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--gm-text-primary)' }}>
+                    {eng.name}
                   </span>
-                  {isMissing ? (
-                    <span style={{ fontSize: '11px', color: 'var(--gm-yellow)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <AlertCircle size={11} /> Not configured
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: '11px', color: 'var(--gm-teal)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <CheckCircle2 size={11} /> Configured
-                    </span>
-                  )}
+                  <StatusBadge status={status} size="sm" label={isConfigured ? 'Online' : 'Not configured'} />
                 </div>
-                <p style={{ fontSize: '12px', color: 'var(--gm-text-muted)', margin: '0 0 10px', lineHeight: 1.4 }}>
-                  {field.description}{' '}
-                  <a href={field.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--gm-accent)' }}>
-                    Docs →
-                  </a>
+
+                <p style={{ margin: '0 0 8px', fontSize: '12px', color: 'var(--gm-text-muted)', lineHeight: 1.5 }}>
+                  {eng.note}
                 </p>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <div style={{ flex: 1, position: 'relative' }}>
-                    <input
-                      className="gm-input"
-                      type={showKeys[field.id] ? 'text' : 'password'}
-                      placeholder={`Paste ${field.envVar}…`}
-                      value={val}
-                      onChange={(e) => setKeyValues((prev) => ({ ...prev, [field.id]: e.target.value }))}
-                      style={{ paddingRight: '36px', fontFamily: val ? 'monospace' : undefined }}
-                    />
-                    <button
-                      onClick={() => toggleShow(field.id)}
+
+                {eng.envVar && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '11px', color: 'var(--gm-text-muted)' }}>Env var:</span>
+                    <code
                       style={{
-                        position: 'absolute',
-                        right: '8px',
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        background: 'transparent',
-                        border: 'none',
-                        cursor: 'pointer',
-                        color: 'var(--gm-text-muted)',
-                        display: 'flex',
-                        alignItems: 'center',
+                        fontFamily: 'monospace',
+                        fontSize: '12px',
+                        color: isConfigured ? 'var(--gm-teal)' : 'var(--gm-yellow)',
+                        background: 'var(--gm-bg-hover)',
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        border: `1px solid ${isConfigured ? 'rgba(45,212,191,0.2)' : 'rgba(240,167,50,0.2)'}`,
                       }}
                     >
-                      {showKeys[field.id] ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
+                      {eng.envVar}
+                    </code>
+                    <CopyButton value={eng.envVar} size={12} />
                   </div>
-                  <button
-                    className="gm-btn gm-btn-primary"
-                    style={{ fontSize: '12px', padding: '6px 12px' }}
-                    disabled={!val.trim()}
-                    onClick={() => saveKey(field)}
-                  >
-                    {isSaved ? <CheckCircle2 size={13} /> : <Save size={13} />}
-                    {isSaved ? 'Saved!' : 'Save'}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Diagnostics */}
-      {activeSection === 'diagnostics' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-            <span style={{ fontSize: '13px', color: 'var(--gm-text-muted)' }}>
-              Last checked: {health?.timestamp ? new Date(health.timestamp).toLocaleTimeString() : 'n/a'}
-            </span>
-            <button
-              className="gm-btn gm-btn-secondary"
-              style={{ fontSize: '12px', padding: '5px 12px' }}
-              onClick={() => refetch()}
-            >
-              <RefreshCw size={13} />
-              Refresh
-            </button>
-          </div>
-
-          {/* Service versions */}
-          <div className="gm-card">
-            <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--gm-text-primary)', marginBottom: '12px' }}>
-              Service Versions
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {Object.entries(health?.service_versions ?? {}).map(([svc, ver]) => (
-                <div key={svc} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                  <span style={{ color: 'var(--gm-text-muted)', textTransform: 'capitalize' }}>{svc}</span>
-                  <span style={{ color: 'var(--gm-text-secondary)', fontFamily: 'monospace' }}>{ver}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Engine status */}
-          <div className="gm-card">
-            <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--gm-text-primary)', marginBottom: '12px' }}>
-              Engine Registry
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {(health?.configured_engines ?? []).map((eng) => (
-                <div key={eng} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-                  <CheckCircle2 size={13} color="var(--gm-teal)" />
-                  <span style={{ color: 'var(--gm-text-secondary)', flex: 1 }}>{eng}</span>
-                  <span style={{ color: 'var(--gm-teal)', fontSize: '11px' }}>online</span>
-                </div>
-              ))}
-              {(health?.unavailable_engines ?? []).map((eng) => (
-                <div key={eng.name} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '12px' }}>
-                  <AlertCircle size={13} color="var(--gm-red)" style={{ flexShrink: 0, marginTop: '1px' }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ color: 'var(--gm-text-secondary)' }}>{eng.name}</span>
-                    <span style={{ color: 'var(--gm-text-muted)', marginLeft: '8px' }}>{eng.reason}</span>
-                    {eng.missing_key && (
-                      <code style={{ marginLeft: '8px', fontFamily: 'monospace', fontSize: '11px', color: 'var(--gm-yellow)' }}>
-                        {eng.missing_key}
-                      </code>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {(health?.configured_engines?.length ?? 0) === 0 &&
-                (health?.unavailable_engines?.length ?? 0) === 0 && (
-                  <p style={{ fontSize: '13px', color: 'var(--gm-text-muted)', margin: 0 }}>
-                    No engine data available.
-                  </p>
                 )}
+                {!eng.envVar && (
+                  <span style={{ fontSize: '11px', color: 'var(--gm-teal)' }}>
+                    No API key required
+                  </span>
+                )}
+              </div>
             </div>
           </div>
+        );
+      })}
+    </div>
+  );
+}
 
-          {/* Missing env vars */}
-          {(health?.missing_env_vars?.length ?? 0) > 0 && (
-            <div className="gm-card" style={{ borderColor: 'rgba(240,167,50,0.3)' }}>
-              <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--gm-yellow)', marginBottom: '10px' }}>
-                Missing Environment Variables
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {health!.missing_env_vars.map((v) => (
+// ── Diagnostics Tab ────────────────────────────────────────────────────────
+
+function DiagnosticsTab({
+  health,
+  refetch,
+  isFetching,
+}: {
+  health: ReturnType<typeof useHealth>['data'];
+  refetch: () => void;
+  isFetching: boolean;
+}) {
+  const [rawOpen, setRawOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  function copyDiagnostics() {
+    navigator.clipboard.writeText(JSON.stringify(health, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {/* Toolbar */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+        <span style={{ fontSize: '12px', color: 'var(--gm-text-muted)' }}>
+          {health?.timestamp ? `Last checked: ${formatDate(health.timestamp)}` : 'Checking…'}
+        </span>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button
+            className="gm-btn gm-btn-secondary"
+            style={{ fontSize: '12px', padding: '5px 12px' }}
+            onClick={copyDiagnostics}
+          >
+            {copied ? <Check size={13} /> : <Copy size={13} />}
+            {copied ? 'Copied!' : 'Copy diagnostics'}
+          </button>
+          <button
+            className="gm-btn gm-btn-secondary"
+            style={{ fontSize: '12px', padding: '5px 12px' }}
+            onClick={() => refetch()}
+          >
+            <RefreshCw size={13} style={{ animation: isFetching ? 'spin 1s linear infinite' : undefined }} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* UI Status */}
+      <DiagCard icon={ShieldCheck} title="UI Status">
+        <InfoRow label="Status" value={<StatusBadge status={health?.ui_status ?? 'unknown'} size="sm" />} />
+        <InfoRow label="Framework" value="React + Vite + TypeScript" />
+      </DiagCard>
+
+      {/* API Backend */}
+      <DiagCard icon={Server} title="API Backend">
+        <InfoRow label="Status" value={<StatusBadge status={health?.api_status ?? 'unknown'} size="sm" />} />
+        <InfoRow label="Endpoint" value={<code style={{ fontFamily: 'monospace', fontSize: '12px' }}>/api/health</code>} />
+        {health?.timestamp && (
+          <InfoRow label="Last response" value={formatDate(health.timestamp)} />
+        )}
+      </DiagCard>
+
+      {/* Engine Registry */}
+      <DiagCard icon={Layers} title="Engine Registry">
+        <InfoRow
+          label="Registry status"
+          value={<StatusBadge status={health?.engine_registry_status ?? 'unknown'} size="sm" />}
+        />
+        <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {(health?.configured_engines ?? []).map((eng) => (
+            <div key={eng} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
+              <CheckCircle2 size={13} color="var(--gm-teal)" />
+              <span style={{ color: 'var(--gm-text-secondary)', flex: 1, textTransform: 'capitalize' }}>{eng}</span>
+              <span style={{ color: 'var(--gm-teal)', fontSize: '11px' }}>online</span>
+            </div>
+          ))}
+          {(health?.unavailable_engines ?? []).map((eng) => (
+            <div key={eng.name} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '12px' }}>
+              <AlertCircle size={13} color="var(--gm-yellow)" style={{ flexShrink: 0, marginTop: '1px' }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ color: 'var(--gm-text-secondary)' }}>{eng.name}</span>
+                <span style={{ color: 'var(--gm-text-muted)', marginLeft: '8px', fontSize: '11px' }}>{eng.reason}</span>
+                {eng.missing_key && (
                   <code
-                    key={v}
                     style={{
+                      marginLeft: '8px',
                       fontFamily: 'monospace',
-                      fontSize: '12px',
-                      color: 'var(--gm-text-secondary)',
-                      padding: '3px 8px',
-                      background: 'var(--gm-bg-hover)',
-                      borderRadius: '4px',
-                      display: 'block',
+                      fontSize: '11px',
+                      color: 'var(--gm-yellow)',
+                      background: 'rgba(240,167,50,0.1)',
+                      padding: '1px 5px',
+                      borderRadius: '3px',
                     }}
                   >
-                    {v}
+                    {eng.missing_key}
                   </code>
-                ))}
+                )}
               </div>
             </div>
-          )}
+          ))}
+          {(health?.configured_engines?.length ?? 0) === 0 &&
+            (health?.unavailable_engines?.length ?? 0) === 0 && (
+              <span style={{ fontSize: '12px', color: 'var(--gm-text-muted)' }}>No engine data available</span>
+            )}
+        </div>
+      </DiagCard>
+
+      {/* Missing env vars */}
+      {(health?.missing_env_vars?.length ?? 0) > 0 && (
+        <DiagCard icon={AlertCircle} title="Missing Environment Variables" accent="var(--gm-yellow)">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
+            {health!.missing_env_vars.map((v) => (
+              <div key={v} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <code
+                  style={{
+                    fontFamily: 'monospace',
+                    fontSize: '12px',
+                    color: 'var(--gm-yellow)',
+                    background: 'rgba(240,167,50,0.08)',
+                    border: '1px solid rgba(240,167,50,0.2)',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    flex: 1,
+                  }}
+                >
+                  {v}
+                </code>
+                <CopyButton value={v} size={12} />
+              </div>
+            ))}
+          </div>
+        </DiagCard>
+      )}
+
+      {/* Service Versions */}
+      <DiagCard icon={Terminal} title="Service Versions">
+        {Object.entries(health?.service_versions ?? {}).map(([svc, ver]) => (
+          <InfoRow
+            key={svc}
+            label={svc.charAt(0).toUpperCase() + svc.slice(1)}
+            value={<code style={{ fontFamily: 'monospace', fontSize: '12px' }}>v{ver}</code>}
+          />
+        ))}
+      </DiagCard>
+
+      {/* Uptime */}
+      <DiagCard icon={Clock} title="Uptime">
+        <InfoRow
+          label="Backend uptime"
+          value={health?.uptime_seconds != null ? formatUptime(health.uptime_seconds) : 'n/a'}
+        />
+      </DiagCard>
+
+      {/* Raw JSON */}
+      <div className="gm-card" style={{ padding: '12px 14px' }}>
+        <button
+          onClick={() => setRawOpen((v) => !v)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            color: 'var(--gm-text-secondary)',
+            fontSize: '13px',
+            fontWeight: 600,
+            padding: 0,
+          }}
+        >
+          {rawOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          Raw health JSON
+        </button>
+        {rawOpen && (
+          <pre
+            style={{
+              marginTop: '10px',
+              padding: '12px',
+              background: 'var(--gm-bg-base)',
+              borderRadius: '6px',
+              border: '1px solid var(--gm-border)',
+              fontFamily: 'monospace',
+              fontSize: '11px',
+              color: 'var(--gm-text-secondary)',
+              overflowX: 'auto',
+              lineHeight: 1.6,
+              maxHeight: '320px',
+              overflowY: 'auto',
+            }}
+          >
+            {JSON.stringify(health, null, 2)}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DiagCard({
+  icon: Icon,
+  title,
+  accent = 'var(--gm-accent)',
+  children,
+}: {
+  icon: React.ElementType;
+  title: string;
+  accent?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="gm-card" style={{ padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+        <Icon size={14} color={accent} />
+        <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--gm-text-primary)' }}>{title}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ── Audit Log Tab ──────────────────────────────────────────────────────────
+
+function AuditLogTab() {
+  const [entries, setEntries] = useState<AuditEntry[]>(() => loadAuditLog());
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  function clearLog() {
+    localStorage.removeItem(AUDIT_LS_KEY);
+    setEntries([]);
+    setConfirmClear(false);
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {/* Toolbar */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: '12px', color: 'var(--gm-text-muted)' }}>
+          {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
+        </span>
+        {entries.length > 0 && (
+          confirmClear ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '12px', color: 'var(--gm-text-muted)' }}>Clear all entries?</span>
+              <button
+                onClick={clearLog}
+                style={{
+                  fontSize: '12px',
+                  padding: '4px 12px',
+                  background: 'var(--gm-red)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                Clear
+              </button>
+              <button
+                className="gm-btn gm-btn-secondary"
+                style={{ fontSize: '12px', padding: '4px 12px' }}
+                onClick={() => setConfirmClear(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              className="gm-btn gm-btn-secondary"
+              style={{ fontSize: '12px', padding: '5px 12px', color: 'var(--gm-red)' }}
+              onClick={() => setConfirmClear(true)}
+            >
+              <Trash2 size={13} />
+              Clear Audit Log
+            </button>
+          )
+        )}
+      </div>
+
+      {entries.length === 0 ? (
+        <div
+          style={{
+            textAlign: 'center',
+            padding: '48px 16px',
+            color: 'var(--gm-text-muted)',
+            fontSize: '13px',
+          }}
+        >
+          <ClipboardList size={28} style={{ display: 'block', margin: '0 auto 12px', opacity: 0.4 }} />
+          No audit log entries
+        </div>
+      ) : (
+        <div
+          className="gm-card"
+          style={{ padding: 0, overflow: 'hidden' }}
+        >
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--gm-border)' }}>
+                {['Timestamp', 'Action', 'Query / Value', 'Results', 'Engine'].map((h) => (
+                  <th
+                    key={h}
+                    style={{
+                      padding: '8px 12px',
+                      textAlign: 'left',
+                      color: 'var(--gm-text-muted)',
+                      fontWeight: 600,
+                      fontSize: '11px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry, i) => (
+                <tr
+                  key={entry.id}
+                  style={{
+                    borderBottom: i < entries.length - 1 ? '1px solid var(--gm-border)' : undefined,
+                    background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)',
+                  }}
+                >
+                  <td style={{ padding: '8px 12px', color: 'var(--gm-text-muted)', whiteSpace: 'nowrap' }}>
+                    {formatDate(entry.timestamp)}
+                  </td>
+                  <td style={{ padding: '8px 12px' }}>
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        padding: '2px 7px',
+                        borderRadius: '4px',
+                        background: 'rgba(47,129,247,0.1)',
+                        color: 'var(--gm-accent)',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {entry.action}
+                    </span>
+                  </td>
+                  <td
+                    style={{
+                      padding: '8px 12px',
+                      color: 'var(--gm-text-secondary)',
+                      maxWidth: '220px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {entry.query ?? '—'}
+                  </td>
+                  <td style={{ padding: '8px 12px', color: 'var(--gm-text-muted)' }}>
+                    {entry.result_count ?? '—'}
+                  </td>
+                  <td style={{ padding: '8px 12px' }}>
+                    {entry.engine ? (
+                      <code
+                        style={{
+                          fontFamily: 'monospace',
+                          fontSize: '11px',
+                          color: 'var(--gm-text-secondary)',
+                          background: 'var(--gm-bg-hover)',
+                          padding: '1px 5px',
+                          borderRadius: '3px',
+                        }}
+                      >
+                        {entry.engine}
+                      </code>
+                    ) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── About Tab ──────────────────────────────────────────────────────────────
+
+function AboutTab() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {/* Identity */}
+      <div className="gm-card" style={{ padding: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+          <div
+            style={{
+              width: '42px',
+              height: '42px',
+              borderRadius: '10px',
+              background: 'rgba(47,129,247,0.15)',
+              border: '1px solid rgba(47,129,247,0.25)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--gm-accent)',
+              fontSize: '20px',
+              fontWeight: 900,
+              fontFamily: 'monospace',
+            }}
+          >
+            GM
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--gm-text-primary)' }}>
+              GhostMesh
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--gm-text-muted)', fontFamily: 'monospace' }}>
+              v0.1.0
+            </div>
+          </div>
+        </div>
+        <p style={{ margin: '0', fontSize: '13px', color: 'var(--gm-text-secondary)', lineHeight: 1.6 }}>
+          GhostMesh is an open source intelligence workstation built on JarvisOS.
+          It provides a unified interface for passive OSINT data gathering across multiple
+          public intelligence sources.
+        </p>
+      </div>
+
+      {/* Architecture */}
+      <div className="gm-card" style={{ padding: '14px 16px' }}>
+        <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--gm-text-primary)', marginBottom: '10px' }}>
+          Architecture
+        </div>
+        <InfoRow label="Frontend"   value="React + Vite + TypeScript" />
+        <InfoRow label="Backend"    value="FastAPI (Python 3.11+)" />
+        <InfoRow label="Framework"  value="JarvisOS v0.1.0" />
+        <InfoRow label="Version"    value={<code style={{ fontFamily: 'monospace', fontSize: '12px' }}>v0.1.0</code>} />
+        <InfoRow label="License"    value="MIT" />
+      </div>
+
+      {/* Source */}
+      <div className="gm-card" style={{ padding: '14px 16px' }}>
+        <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--gm-text-primary)', marginBottom: '10px' }}>
+          Source
+        </div>
+        <div style={{ fontSize: '13px', color: 'var(--gm-text-muted)', marginBottom: '4px' }}>GitHub repository</div>
+        <code
+          style={{
+            fontFamily: 'monospace',
+            fontSize: '12px',
+            color: 'var(--gm-accent)',
+            background: 'var(--gm-bg-hover)',
+            padding: '4px 10px',
+            borderRadius: '4px',
+            display: 'block',
+          }}
+        >
+          JarvisOS/ghostmesh
+        </code>
+      </div>
+
+      {/* Safety */}
+      <div
+        style={{
+          padding: '12px 14px',
+          background: 'rgba(45,212,191,0.05)',
+          border: '1px solid rgba(45,212,191,0.2)',
+          borderRadius: '8px',
+          fontSize: '13px',
+          color: 'var(--gm-text-secondary)',
+          lineHeight: 1.6,
+          display: 'flex',
+          gap: '10px',
+          alignItems: 'flex-start',
+        }}
+      >
+        <ShieldCheck size={16} color="var(--gm-teal)" style={{ flexShrink: 0, marginTop: '1px' }} />
+        <span>
+          GhostMesh is designed for passive, public-source intelligence gathering. Active scanning
+          features require explicit authorization. No private data is accessed.
+        </span>
+      </div>
     </div>
   );
 }
