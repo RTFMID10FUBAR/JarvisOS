@@ -27,6 +27,7 @@ import {
   Spinner,
 } from '../components';
 import { exportJSON } from '../utils/export';
+import { apiUrl } from '../utils/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -107,7 +108,7 @@ const LABEL_STYLE: React.CSSProperties = {
 // ---------------------------------------------------------------------------
 
 async function callPeopleSearch(form: SearchForm): Promise<PeopleResult> {
-  const res = await fetch('/api/people/search', {
+  const res = await fetch(apiUrl('/api/people/search'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

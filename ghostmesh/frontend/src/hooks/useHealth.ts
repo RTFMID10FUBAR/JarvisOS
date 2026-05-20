@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type { HealthData } from '../types';
+import { apiUrl } from '../utils/api';
 
 const MOCK_HEALTH: HealthData = {
   ui_status: 'online',
@@ -19,7 +20,7 @@ const MOCK_HEALTH: HealthData = {
 };
 
 async function fetchHealth(): Promise<HealthData> {
-  const res = await fetch('/api/health', { signal: AbortSignal.timeout(5000) });
+  const res = await fetch(apiUrl('/api/health'), { signal: AbortSignal.timeout(5000) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }

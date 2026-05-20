@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Allow JIT for Chromium renderer -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- Allow unsigned executable memory (needed by some V8 internal paths) -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- Disable library validation so bundled native modules can load -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!-- Outbound network (API calls to search engines, OSINT sources) -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!-- Loopback server for the FastAPI backend -->
+  <key>com.apple.security.network.server</key>
+  <true/>
+</dict>
+</plist>
