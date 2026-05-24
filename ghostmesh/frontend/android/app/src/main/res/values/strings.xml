@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">JarvisOS GhostMesh</string>
+    <string name="title_activity_main">JarvisOS GhostMesh</string>
+    <string name="package_name">com.jarvisos.ghostmesh</string>
+    <string name="custom_url_scheme">com.jarvisos.ghostmesh</string>
+</resources>
