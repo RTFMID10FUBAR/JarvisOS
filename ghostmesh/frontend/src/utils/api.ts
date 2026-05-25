@@ -22,13 +22,13 @@ export function apiBase(): string {
     Capacitor?: { isNativePlatform?: () => boolean };
   };
   if (w.jarvisOS?.isElectron) {
-    return 'http://127.0.0.1:8000';
+    return 'http://127.0.0.1:8080';
   }
 
   // 3. Capacitor native shell (Android / iOS)
   if (w.Capacitor?.isNativePlatform?.()) {
     // On emulator 10.0.2.2 → host machine; on real device user must configure in Settings
-    return 'http://10.0.2.2:8000';
+    return 'http://10.0.2.2:8080';
   }
 
   // 4. Browser dev server / hosted — use the Vite /api proxy

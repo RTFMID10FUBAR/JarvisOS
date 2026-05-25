@@ -85,7 +85,7 @@ The mobile app needs to reach the GhostMesh FastAPI backend over the network.
 1. Start the backend on your Mac: `cd ghostmesh/backend && ./start.sh`
 2. Find your Mac's LAN IP: `ifconfig | grep "inet " | grep -v 127.0.0.1`
    e.g. `192.168.1.42`
-3. In the app: **Settings → Engine Config → Backend URL** → enter `http://192.168.1.42:8000`
+3. In the app: **Settings → Engine Config → Backend URL** → enter `http://192.168.1.42:8080`
 4. Tap Save — all API calls immediately route to your Mac
 
 ### Option B — Android emulator (no real device)

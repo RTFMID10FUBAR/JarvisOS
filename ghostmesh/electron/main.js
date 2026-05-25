@@ -14,7 +14,7 @@ let mainWindow = null;
 let backendProcess = null;
 let backendReady = false;
 
-const BACKEND_PORT = 8000;
+const BACKEND_PORT = parseInt(process.env.GHOSTMESH_PORT ?? '8080', 10);
 const FRONTEND_DEV_URL = 'http://localhost:5173';
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 

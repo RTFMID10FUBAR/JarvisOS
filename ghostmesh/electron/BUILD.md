@@ -27,7 +27,7 @@ npm run dev          # serves on http://localhost:5173
 cd ghostmesh/electron
 npm install
 npm run start:dev    # opens a native window loading localhost:5173
-                     # also auto-starts the FastAPI backend on port 8000
+                     # also auto-starts the FastAPI backend on port 8080
 ```
 
 The FastAPI backend is launched automatically by Electron. If it doesn't start
@@ -101,8 +101,8 @@ JarvisOS GhostMesh.app/
 
 On launch, `main.js`:
 1. Reads `backend/.env` (if present) and merges into the subprocess environment
-2. Spawns `backend/venv/bin/python3 -m uvicorn main:app --port 8000 --host 127.0.0.1`
-3. Polls `http://127.0.0.1:8000/api/health` until it responds (up to 20 s)
+2. Spawns `backend/venv/bin/python3 -m uvicorn main:app --port 8080 --host 127.0.0.1`
+3. Polls `http://127.0.0.1:8080/api/health` until it responds (up to 20 s)
 4. Opens a `BrowserWindow` loading `frontend-dist/index.html`
 5. The React app proxies `/api/*` requests to the local backend
 
