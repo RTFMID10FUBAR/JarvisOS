@@ -1,5 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import type { SearchQuery, SearchResponse, SearchResult } from '../types';
+import { apiUrl } from '../utils/api';
 
 function generateMockResults(query: string): SearchResult[] {
   return [
@@ -19,7 +20,7 @@ function generateMockResults(query: string): SearchResult[] {
 }
 
 async function runSearch(params: SearchQuery): Promise<SearchResponse> {
-  const res = await fetch('/api/search', {
+  const res = await fetch(apiUrl('/api/search'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),

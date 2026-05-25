@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Allow HTTP connections to private LAN addresses (e.g. your Mac running the backend).
+     HTTPS is always allowed everywhere. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- localhost / Android emulator loopback -->
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <!-- RFC-1918 LAN ranges (user-configured backend on local network) -->
+        <domain includeSubdomains="true">192.168.0.0</domain>
+        <domain includeSubdomains="true">192.168.1.0</domain>
+        <domain includeSubdomains="true">10.0.0.0</domain>
+        <domain includeSubdomains="true">172.16.0.0</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

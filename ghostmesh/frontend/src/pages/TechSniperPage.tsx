@@ -10,6 +10,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { SectionHeader, Spinner, ConfidenceBadge, EmptyState } from '../components';
+import { apiUrl } from '../utils/api';
 import type { TechScanResult } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -142,7 +143,7 @@ export function TechSniperPage() {
 
     // Attempt real API, fall back to mock after 1.5 s
     const timeout = new Promise<null>((res) => setTimeout(() => res(null), 1500));
-    const apiCall = fetch('/api/recon/tech', {
+    const apiCall = fetch(apiUrl('/api/recon/tech'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: trimmed, mode }),

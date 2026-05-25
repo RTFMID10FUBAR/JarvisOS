@@ -55,11 +55,16 @@ interface RecentSearchEntry {
 }
 
 const ENGINE_OPTIONS: EngineOption[] = [
-  { id: 'duckduckgo',     name: 'DuckDuckGo',    letter: 'D', status: 'online',       statusLabel: 'Online'       },
-  { id: 'searxng',        name: 'SearXNG',        letter: 'S', status: 'offline',      statusLabel: 'Offline'      },
-  { id: 'shodan',         name: 'Shodan',          letter: 'H', status: 'key_required', statusLabel: 'Key required' },
-  { id: 'virustotal',     name: 'VirusTotal',      letter: 'V', status: 'key_required', statusLabel: 'Key required' },
-  { id: 'haveibeenpwned', name: 'HaveIBeenPwned', letter: 'P', status: 'key_required', statusLabel: 'Key required' },
+  { id: 'duckduckgo',     name: 'DuckDuckGo',      letter: 'D', status: 'online',       statusLabel: 'Online'       },
+  { id: 'marginalia',     name: 'Marginalia',       letter: 'M', status: 'online',       statusLabel: 'Online'       },
+  { id: 'urlscan',        name: 'URLScan.io',       letter: 'U', status: 'online',       statusLabel: 'Online'       },
+  { id: 'crtsh',          name: 'Crt.sh',           letter: 'C', status: 'online',       statusLabel: 'Online'       },
+  { id: 'searxng',        name: 'SearXNG',          letter: 'X', status: 'offline',      statusLabel: 'Self-hosted'  },
+  { id: 'brave',          name: 'Brave Search',     letter: 'B', status: 'key_required', statusLabel: 'Key required' },
+  { id: 'otx',            name: 'AlienVault OTX',   letter: 'O', status: 'key_required', statusLabel: 'Key required' },
+  { id: 'shodan',         name: 'Shodan',            letter: 'S', status: 'key_required', statusLabel: 'Key required' },
+  { id: 'virustotal',     name: 'VirusTotal',        letter: 'V', status: 'key_required', statusLabel: 'Key required' },
+  { id: 'haveibeenpwned', name: 'HaveIBeenPwned',   letter: 'H', status: 'key_required', statusLabel: 'Key required' },
 ];
 
 const MAX_RESULTS_OPTIONS = [10, 25, 50] as const;
@@ -541,7 +546,7 @@ export function SearchPage() {
 
   // Form state
   const [query, setQuery]                     = useState(searchParams.get('q') ?? '');
-  const [selectedEngines, setSelectedEngines] = useState<string[]>(['duckduckgo']);
+  const [selectedEngines, setSelectedEngines] = useState<string[]>(['duckduckgo', 'marginalia', 'urlscan']);
   const [mode, setMode]                       = useState<ReconMode>('passive');
   const [maxResults, setMaxResults]           = useState<number>(25);
   const [hasSearched, setHasSearched]         = useState(false);
@@ -587,14 +592,14 @@ export function SearchPage() {
     mutate({ query: trimmed, engines: selectedEngines, mode, max_results: maxResults });
   }
 
-  // Derived result data
+  // Derived result data — never suppress results, always render what the API returns
   const allResults    = data?.results ?? [];
-  const categories    = [...new Set(allResults.map(r => r.category).filter(Boolean))] as string[];
-  const filtered      = activeCategory ? allResults.filter(r => r.category === activeCategory) : allResults;
+  const realResults   = allResults.filter(r => r.source_engine !== 'system');
+  const categories    = [...new Set(realResults.map(r => r.category).filter(Boolean))] as string[];
+  const filtered      = activeCategory ? realResults.filter(r => r.category === activeCategory) : realResults;
   const sorted        = sortResults(filtered, sortKey);
   const failedEngines = data?.engines_failed ?? [];
-  const allOffline    = hasSearched && !!data && data.engines_used.length === 0 && data.results.length > 0
-    && data.results[0]?.source_engine === 'system';
+  const apiOffline    = hasSearched && !!data && data.engines_used.length === 0;
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-5 animate-fade-in">
@@ -648,7 +653,7 @@ export function SearchPage() {
           >
             Engines
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-5 gap-2">
             {ENGINE_OPTIONS.map(eng => (
               <EngineCheckbox
                 key={eng.id}
@@ -732,11 +737,11 @@ export function SearchPage() {
         />
       )}
 
-      {/* ── All engines offline warning (system mock result present) ── */}
-      {allOffline && !isPending && (
+      {/* ── API offline banner (shown above results, not instead of them) ── */}
+      {apiOffline && !isPending && (
         <ErrorMessage
-          title="All search engines unavailable"
-          message="No configured engines could be reached. Add API keys in Settings or ensure SearXNG is running."
+          title="Search API unavailable"
+          message="The GhostMesh backend could not be reached. Start the backend with ghostmesh/backend/start.sh, or add API keys in Settings."
           onRetry={() => mutate({ query: query.trim(), engines: selectedEngines, mode, max_results: maxResults })}
           onDiagnostics={() => navigate('/settings')}
         />
@@ -752,7 +757,7 @@ export function SearchPage() {
       )}
 
       {/* ── Results ── */}
-      {!isPending && data && data.results.length > 0 && !allOffline && (
+      {!isPending && data && realResults.length > 0 && (
         <div className="space-y-4">
 
           {/* Engine failure warning banner */}
@@ -787,8 +792,8 @@ export function SearchPage() {
           >
             <Filter size={13} style={{ color: 'var(--gm-text-muted)' }} />
             <span className="text-xs" style={{ color: 'var(--gm-text-secondary)' }}>
-              <strong style={{ color: 'var(--gm-text-primary)' }}>{data.total}</strong>{' '}
-              result{data.total !== 1 ? 's' : ''}
+              <strong style={{ color: 'var(--gm-text-primary)' }}>{realResults.length}</strong>{' '}
+              result{realResults.length !== 1 ? 's' : ''}
               {data.engines_used.length > 0 && (
                 <>
                   {' from '}
@@ -805,7 +810,7 @@ export function SearchPage() {
               )}
             </span>
             <div className="flex-1" />
-            <ExportMenu results={data.results} query={data.query} />
+            <ExportMenu results={realResults} query={data.query} />
           </div>
 
           {/* View toggle + sort */}
@@ -905,7 +910,7 @@ export function SearchPage() {
       )}
 
       {/* ── Zero results ── */}
-      {!isPending && hasSearched && data && data.results.length === 0 && !allOffline && (
+      {!isPending && hasSearched && data && realResults.length === 0 && !apiOffline && (
         <EmptyState
           icon={Search}
           title={`No results for "${data.query}"`}

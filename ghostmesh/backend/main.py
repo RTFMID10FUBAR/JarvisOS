@@ -20,12 +20,17 @@ app.add_middleware(
 START_TIME = time.time()
 
 ENGINES = {
-    "duckduckgo": {"name": "DuckDuckGo", "requires_key": False, "env_var": None},
-    "searxng": {"name": "SearXNG", "requires_key": False, "env_var": "SEARXNG_URL"},
-    "shodan": {"name": "Shodan", "requires_key": True, "env_var": "SHODAN_API_KEY"},
-    "virustotal": {"name": "VirusTotal", "requires_key": True, "env_var": "VT_API_KEY"},
-    "haveibeenpwned": {"name": "HaveIBeenPwned", "requires_key": True, "env_var": "HIBP_API_KEY"},
-    "hunter": {"name": "Hunter.io", "requires_key": True, "env_var": "HUNTER_API_KEY"},
+    "duckduckgo":     {"name": "DuckDuckGo",    "requires_key": False, "env_var": None},
+    "marginalia":     {"name": "Marginalia",     "requires_key": False, "env_var": None},
+    "urlscan":        {"name": "URLScan.io",     "requires_key": False, "env_var": None},
+    "crtsh":          {"name": "Crt.sh",         "requires_key": False, "env_var": None},
+    "searxng":        {"name": "SearXNG",        "requires_key": False, "env_var": "SEARXNG_URL"},
+    "brave":          {"name": "Brave Search",   "requires_key": True,  "env_var": "BRAVE_SEARCH_API_KEY"},
+    "otx":            {"name": "AlienVault OTX", "requires_key": True,  "env_var": "OTX_API_KEY"},
+    "shodan":         {"name": "Shodan",         "requires_key": True,  "env_var": "SHODAN_API_KEY"},
+    "virustotal":     {"name": "VirusTotal",     "requires_key": True,  "env_var": "VT_API_KEY"},
+    "haveibeenpwned": {"name": "HaveIBeenPwned", "requires_key": True,  "env_var": "HIBP_API_KEY"},
+    "hunter":         {"name": "Hunter.io",      "requires_key": True,  "env_var": "HUNTER_API_KEY"},
 }
 
 
@@ -89,24 +94,46 @@ async def search(body: SearchQuery):
     engines_failed = []
     start = time.time()
 
-    if "duckduckgo" in body.engines:
+    async def _run(engine_id: str, coro):
         try:
-            ddg_results = await search_duckduckgo(body.query, body.max_results)
-            results.extend(ddg_results)
-            engines_used.append("duckduckgo")
+            res = await coro
+            results.extend(res)
+            engines_used.append(engine_id)
         except Exception:
-            engines_failed.append("duckduckgo")
+            engines_failed.append(engine_id)
+
+    if "duckduckgo" in body.engines:
+        await _run("duckduckgo", search_duckduckgo(body.query, body.max_results))
+
+    if "marginalia" in body.engines:
+        await _run("marginalia", search_marginalia(body.query, body.max_results))
+
+    if "urlscan" in body.engines:
+        await _run("urlscan", search_urlscan(body.query, body.max_results))
+
+    if "crtsh" in body.engines:
+        await _run("crtsh", search_crtsh(body.query, body.max_results))
 
     searxng_url = os.getenv("SEARXNG_URL")
-    if "searxng" in body.engines and searxng_url:
-        try:
-            sx_results = await search_searxng(body.query, searxng_url, body.max_results)
-            results.extend(sx_results)
-            engines_used.append("searxng")
-        except Exception:
+    if "searxng" in body.engines:
+        if searxng_url:
+            await _run("searxng", search_searxng(body.query, searxng_url, body.max_results))
+        else:
             engines_failed.append("searxng")
-    elif "searxng" in body.engines:
-        engines_failed.append("searxng")
+
+    brave_key = os.getenv("BRAVE_SEARCH_API_KEY")
+    if "brave" in body.engines:
+        if brave_key:
+            await _run("brave", search_brave(body.query, brave_key, body.max_results))
+        else:
+            engines_failed.append("brave")
+
+    otx_key = os.getenv("OTX_API_KEY")
+    if "otx" in body.engines:
+        if otx_key:
+            await _run("otx", search_otx(body.query, otx_key, body.max_results))
+        else:
+            engines_failed.append("otx")
 
     duration_ms = int((time.time() - start) * 1000)
     return {
@@ -183,6 +210,156 @@ async def search_searxng(query: str, base_url: str, max_results: int) -> list[di
         return results
 
 
+async def search_marginalia(query: str, max_results: int) -> list[dict]:
+    """Marginalia Search — independent web index, no key required."""
+    import urllib.parse
+    encoded = urllib.parse.quote(query)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"https://api.marginalia.nu/search/{encoded}",
+            headers={"Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results: list[dict] = []
+        for i, item in enumerate(data.get("results", [])[:max_results]):
+            results.append({
+                "id": f"mg-{i}",
+                "title": item.get("title") or item.get("url", ""),
+                "snippet": item.get("description") or "",
+                "url": item.get("url", ""),
+                "source_engine": "marginalia",
+                "timestamp": None,
+                "confidence": 65,
+                "tags": ["web"],
+                "category": "general",
+                "archived": False,
+            })
+        return results
+
+
+async def search_urlscan(query: str, max_results: int) -> list[dict]:
+    """URLScan.io public search — no key required for public results."""
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        resp = await client.get(
+            "https://urlscan.io/api/v1/search/",
+            params={"q": query, "size": min(max_results, 100)},
+            headers={"Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results: list[dict] = []
+        for i, item in enumerate(data.get("results", [])[:max_results]):
+            page = item.get("page", {})
+            results.append({
+                "id": f"us-{i}",
+                "title": page.get("title") or page.get("domain", query),
+                "snippet": f"Scanned: {page.get('url', '')} — {page.get('domain', '')}",
+                "url": item.get("result", page.get("url", "")),
+                "source_engine": "urlscan",
+                "timestamp": item.get("task", {}).get("time"),
+                "confidence": 70,
+                "tags": ["url", "scan"],
+                "category": "security",
+                "archived": False,
+            })
+        return results
+
+
+async def search_crtsh(query: str, max_results: int) -> list[dict]:
+    """Crt.sh certificate transparency search — no key required."""
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        resp = await client.get(
+            "https://crt.sh/",
+            params={"q": query, "output": "json"},
+            headers={"Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        seen: set[str] = set()
+        results: list[dict] = []
+        for item in data[:max_results * 3]:
+            name = item.get("name_value", "")
+            for domain in name.split("\n"):
+                domain = domain.strip().lstrip("*.")
+                if domain and domain not in seen:
+                    seen.add(domain)
+                    results.append({
+                        "id": f"crt-{len(results)}",
+                        "title": domain,
+                        "snippet": (
+                            f"Issuer: {item.get('issuer_name', 'unknown')} — "
+                            f"Logged: {item.get('entry_timestamp', '')[:10]}"
+                        ),
+                        "url": f"https://crt.sh/?q={domain}",
+                        "source_engine": "crtsh",
+                        "timestamp": item.get("entry_timestamp"),
+                        "confidence": 75,
+                        "tags": ["certificate", "domain"],
+                        "category": "infrastructure",
+                        "archived": False,
+                    })
+                    if len(results) >= max_results:
+                        break
+            if len(results) >= max_results:
+                break
+        return results
+
+
+async def search_brave(query: str, api_key: str, max_results: int) -> list[dict]:
+    """Brave Search API — requires BRAVE_SEARCH_API_KEY."""
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        resp = await client.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": query, "count": min(max_results, 20)},
+            headers={"Accept": "application/json", "X-Subscription-Token": api_key},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results: list[dict] = []
+        for i, item in enumerate(data.get("web", {}).get("results", [])[:max_results]):
+            results.append({
+                "id": f"bv-{i}",
+                "title": item.get("title", ""),
+                "snippet": item.get("description", ""),
+                "url": item.get("url", ""),
+                "source_engine": "brave",
+                "timestamp": item.get("age"),
+                "confidence": 75,
+                "tags": ["web"],
+                "category": "general",
+                "archived": False,
+            })
+        return results
+
+
+async def search_otx(query: str, api_key: str, max_results: int) -> list[dict]:
+    """AlienVault OTX threat intelligence search — requires OTX_API_KEY."""
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        resp = await client.get(
+            "https://otx.alienvault.com/api/v1/search/pulses",
+            params={"q": query, "page_size": min(max_results, 20)},
+            headers={"X-OTX-API-KEY": api_key, "Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results: list[dict] = []
+        for i, item in enumerate(data.get("results", [])[:max_results]):
+            results.append({
+                "id": f"otx-{i}",
+                "title": item.get("name", ""),
+                "snippet": item.get("description", "")[:200],
+                "url": f"https://otx.alienvault.com/pulse/{item.get('id', '')}",
+                "source_engine": "otx",
+                "timestamp": item.get("created"),
+                "confidence": 72,
+                "tags": item.get("tags", [])[:5],
+                "category": "threat-intel",
+                "archived": False,
+            })
+        return results
+
+
 class ArchiveQuery(BaseModel):
     url: str
     from_date: Optional[str] = None
@@ -231,5 +408,152 @@ async def search_archive(body: ArchiveQuery):
 
 if __name__ == "__main__":
     import uvicorn
+    port = int(os.environ.get("GHOSTMESH_PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=True)
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+
+# ---------------------------------------------------------------------------
+# People search — passive username & domain lookup
+# ---------------------------------------------------------------------------
+
+PLATFORM_CHECKS = [
+    {"name": "GitHub",        "url": "https://github.com/{}",                      "cat": "code"},
+    {"name": "GitLab",        "url": "https://gitlab.com/{}",                      "cat": "code"},
+    {"name": "Twitter/X",     "url": "https://x.com/{}",                           "cat": "social"},
+    {"name": "Reddit",        "url": "https://www.reddit.com/user/{}",             "cat": "social"},
+    {"name": "Instagram",     "url": "https://www.instagram.com/{}/",              "cat": "social"},
+    {"name": "TikTok",        "url": "https://www.tiktok.com/@{}",                 "cat": "social"},
+    {"name": "YouTube",       "url": "https://www.youtube.com/@{}",                "cat": "video"},
+    {"name": "Twitch",        "url": "https://www.twitch.tv/{}",                   "cat": "streaming"},
+    {"name": "LinkedIn",      "url": "https://www.linkedin.com/in/{}",             "cat": "professional"},
+    {"name": "Pinterest",     "url": "https://www.pinterest.com/{}/",              "cat": "social"},
+    {"name": "Medium",        "url": "https://medium.com/@{}",                     "cat": "blog"},
+    {"name": "Dev.to",        "url": "https://dev.to/{}",                          "cat": "tech"},
+    {"name": "Keybase",       "url": "https://keybase.io/{}",                      "cat": "identity"},
+    {"name": "HackerNews",    "url": "https://news.ycombinator.com/user?id={}",    "cat": "tech"},
+    {"name": "Mastodon",      "url": "https://mastodon.social/@{}",                "cat": "social"},
+    {"name": "Gravatar",      "url": "https://gravatar.com/{}",                    "cat": "identity"},
+    {"name": "Flickr",        "url": "https://www.flickr.com/people/{}",           "cat": "photos"},
+    {"name": "Tumblr",        "url": "https://{}.tumblr.com",                      "cat": "blog"},
+    {"name": "Telegram",      "url": "https://t.me/{}",                            "cat": "messaging"},
+    {"name": "Steam",         "url": "https://steamcommunity.com/id/{}",           "cat": "gaming"},
+]
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (compatible; GhostMesh/0.1; +https://github.com/RTFMID10FUBAR/JarvisOS)"
+    )
+}
+
+
+async def _check_platform(client: httpx.AsyncClient, platform: dict, username: str) -> dict | None:
+    url = platform["url"].format(username)
+    try:
+        resp = await client.head(url, follow_redirects=True, timeout=6.0)
+        found = resp.status_code in (200, 301, 302)
+        if not found and resp.status_code == 405:
+            resp2 = await client.get(url, follow_redirects=True, timeout=6.0)
+            found = resp2.status_code == 200
+        if found:
+            return {
+                "platform": platform["name"],
+                "url": url,
+                "username": username,
+                "category": platform["cat"],
+                "verified": False,
+                "http_status": resp.status_code,
+            }
+    except Exception:
+        pass
+    return None
+
+
+class PeopleQuery(BaseModel):
+    first_name: str = ""
+    last_name: str = ""
+    username: str = ""
+    email: str = ""
+    phone: str = ""
+    domain: str = ""
+    location: str = ""
+
+
+@app.post("/api/people/search")
+async def people_search(body: PeopleQuery):
+    profiles: list[dict] = []
+    matched_fields: list[str] = []
+    sources: list[str] = []
+
+    # Username lookup across platforms
+    uname = body.username.lstrip("@").strip()
+    if uname:
+        matched_fields.append("username")
+        async with httpx.AsyncClient(headers=HEADERS) as client:
+            tasks = [_check_platform(client, p, uname) for p in PLATFORM_CHECKS]
+            import asyncio
+            results_raw = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results_raw:
+            if isinstance(r, dict):
+                profiles.append(r)
+                sources.append(r["platform"])
+
+    # Domain / crt.sh lookup
+    domain = body.domain.strip() or (body.email.split("@")[-1].strip() if "@" in body.email else "")
+    crt_results: list[dict] = []
+    if domain:
+        if body.domain:
+            matched_fields.append("domain")
+        if body.email:
+            matched_fields.append("email")
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://crt.sh/",
+                    params={"q": domain, "output": "json"},
+                    headers={"Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                crt_data = resp.json()
+                seen: set[str] = set()
+                for item in crt_data[:20]:
+                    for sub in item.get("name_value", "").split("\n"):
+                        sub = sub.strip()
+                        if sub and sub not in seen and not sub.startswith("*"):
+                            seen.add(sub)
+                            crt_results.append({
+                                "platform": "Certificate Transparency",
+                                "url": f"https://crt.sh/?q={sub}",
+                                "username": sub,
+                                "category": "infrastructure",
+                                "verified": False,
+                                "http_status": 200,
+                            })
+                sources.append("Crt.sh")
+        except Exception:
+            pass
+
+    # Name-based fields tracking
+    if body.first_name or body.last_name:
+        matched_fields.append("name")
+    if body.phone:
+        matched_fields.append("phone")
+    if body.location:
+        matched_fields.append("location")
+
+    all_profiles = profiles + crt_results
+    confidence = min(30 + len(all_profiles) * 4 + len(matched_fields) * 8, 95)
+
+    name_parts = [body.first_name, body.last_name]
+    display_name = " ".join(p for p in name_parts if p).strip() or uname or domain or "Unknown"
+
+    return {
+        "id": f"result-{int(time.time())}",
+        "name": display_name,
+        "confidence": confidence,
+        "matched_fields": list(set(matched_fields)) or ["query"],
+        "profiles": all_profiles,
+        "sources_checked": sources,
+        "last_checked": datetime.now(timezone.utc).isoformat(),
+        "platforms_found": len(profiles),
+        "platforms_checked": len(PLATFORM_CHECKS),
+    }

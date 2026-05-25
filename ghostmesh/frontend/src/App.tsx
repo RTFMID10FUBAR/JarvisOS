@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { useEffect } from 'react';
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './layout';
 import { OverviewPage } from './pages/OverviewPage';
@@ -16,17 +17,35 @@ import { GraphPage } from './pages/GraphPage';
 import { FrameworkPage } from './pages/FrameworkPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { HubPage } from './pages/HubPage';
 
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
 });
 
+// Listens for navigate IPC events from the Electron main process menu items.
+// No-op in browser mode (window.jarvisOS is undefined).
+function ElectronNavigationBridge() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const api = (window as unknown as { jarvisOS?: { onNavigate?: (cb: (route: string) => void) => () => void } }).jarvisOS;
+    if (!api?.onNavigate) return;
+    const unsub = api.onNavigate((route) => navigate(route));
+    return unsub;
+  }, [navigate]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
       <BrowserRouter>
+        <ElectronNavigationBridge />
         <Layout>
           <Routes>
+            <Route path="/modules" element={<HubPage />} />
             <Route path="/" element={<OverviewPage />} />
             <Route path="/search" element={<SearchPage />} />
             <Route path="/recon" element={<ReconPage />} />

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Settings,
   Activity,
@@ -17,12 +17,14 @@ import {
   Clock,
   Layers,
   ShieldCheck,
+  Smartphone,
 } from 'lucide-react';
 import { useHealth } from '../hooks/useHealth';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { CopyButton } from '../components/CopyButton';
 import type { ServiceStatus } from '../types';
+import { getBackendUrl, setBackendUrl } from '../utils/api';
 
 // ── Engine definitions ─────────────────────────────────────────────────────
 
@@ -222,6 +224,72 @@ export function SettingsPage() {
 
 // ── Engine Config Tab ──────────────────────────────────────────────────────
 
+function BackendUrlSection() {
+  const [url, setUrl] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setUrl(getBackendUrl());
+  }, []);
+
+  function handleSave() {
+    setBackendUrl(url);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  function handleClear() {
+    setUrl('');
+    setBackendUrl('');
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  }
+
+  return (
+    <div className="gm-card" style={{ padding: '16px', marginBottom: '6px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+        <Smartphone size={15} style={{ color: 'var(--gm-accent)' }} />
+        <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--gm-text-primary)' }}>
+          Backend URL
+        </span>
+        <span style={{
+          padding: '1px 6px', borderRadius: '3px', fontSize: '10px', fontWeight: 700,
+          background: 'rgba(47,129,247,0.12)', color: 'var(--gm-accent)',
+          textTransform: 'uppercase', letterSpacing: '0.05em',
+        }}>Android / iOS / Remote</span>
+      </div>
+      <p style={{ margin: '0 0 12px', fontSize: '12px', color: 'var(--gm-text-muted)', lineHeight: 1.55 }}>
+        Override the API base URL. Required on Android / iOS — enter your Mac or server IP where the backend is running.
+        Leave empty to use the default (localhost in Electron, 10.0.2.2 in emulator, proxy in browser).
+      </p>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <input
+          className="gm-input"
+          style={{ flex: 1, fontFamily: 'monospace', fontSize: '13px' }}
+          type="url"
+          placeholder="http://192.168.1.100:8000"
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleSave(); }}
+        />
+        <button className="gm-btn gm-btn-primary" style={{ fontSize: '12px', padding: '6px 14px', flexShrink: 0 }} onClick={handleSave}>
+          {saved ? <><Check size={13} /> Saved</> : 'Save'}
+        </button>
+        {url && (
+          <button className="gm-btn gm-btn-secondary" style={{ fontSize: '12px', padding: '6px 10px', flexShrink: 0 }} onClick={handleClear}>
+            Clear
+          </button>
+        )}
+      </div>
+      {url && (
+        <p style={{ margin: '8px 0 0', fontSize: '11px', color: 'var(--gm-teal)' }}>
+          Active: all API calls will go to <code style={{ fontFamily: 'monospace' }}>{url}</code>
+        </p>
+      )}
+    </div>
+  );
+}
+
 function EngineConfigTab({ health }: { health: ReturnType<typeof useHealth>['data'] }) {
   const configuredSet = new Set(health?.configured_engines ?? []);
   const missingSet    = new Set(health?.missing_env_vars ?? []);
@@ -235,6 +303,9 @@ function EngineConfigTab({ health }: { health: ReturnType<typeof useHealth>['dat
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      {/* Backend URL (mobile / remote) */}
+      <BackendUrlSection />
+
       {/* Note banner */}
       <div
         style={{

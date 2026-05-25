@@ -18,6 +18,7 @@ import {
   Image,
   Scissors,
   GitFork,
+  LayoutGrid,
 } from 'lucide-react';
 import { useHealth } from '../hooks/useHealth';
 
@@ -35,6 +36,11 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  {
+    label: 'Modules',
+    path: '/modules',
+    icon: <LayoutGrid size={16} />,
+  },
   {
     label: 'Overview',
     path: '/',
@@ -169,17 +175,17 @@ export function Sidebar() {
               textOverflow: 'ellipsis',
             }}
           >
-            GhostMesh
+            JarvisOS
           </div>
-          <div
-            style={{
-              color: 'var(--gm-text-muted)',
-              fontSize: '10px',
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-            }}
-          >
-            OSINT Platform
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center',
+              padding: '1px 5px', borderRadius: '3px',
+              background: 'rgba(47,129,247,0.15)', border: '1px solid rgba(47,129,247,0.3)',
+              color: 'var(--gm-accent)', fontSize: '9px', letterSpacing: '0.06em',
+              textTransform: 'uppercase', fontWeight: 700,
+            }}>GhostMesh</span>
+            <span style={{ color: 'var(--gm-teal)', fontSize: '9px' }}>●</span>
           </div>
         </div>
       </div>

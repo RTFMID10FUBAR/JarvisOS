@@ -15,6 +15,7 @@ import {
   Download,
 } from 'lucide-react';
 import { SectionHeader, Spinner, EmptyState } from '../components';
+import { apiUrl } from '../utils/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -236,7 +237,7 @@ export function MetadataPage() {
       const formData = new FormData();
       formData.append('file', selectedFile);
 
-      const res = await fetch('/api/recon/metadata', {
+      const res = await fetch(apiUrl('/api/recon/metadata'), {
         method: 'POST',
         body: formData,
         signal: AbortSignal.timeout(15_000),

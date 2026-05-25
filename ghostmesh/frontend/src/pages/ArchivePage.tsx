@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Archive, ExternalLink, Calendar, Info, Download } from 'lucide-react';
 import { SectionHeader, Spinner, EmptyState } from '../components';
+import { apiUrl } from '../utils/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,7 +122,7 @@ export function ArchivePage() {
 
     // Try real backend; fall back to mock
     try {
-      const res = await fetch('/api/recon/archive', {
+      const res = await fetch(apiUrl('/api/recon/archive'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: trimmed, from: fromDate || undefined, to: toDate || undefined }),
