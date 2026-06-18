@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+# Optional but recommended: enables in-app song search without any login.
+# The remote still runs without it (falls back to opening the YTM search page).
+ytmusicapi>=1.7
