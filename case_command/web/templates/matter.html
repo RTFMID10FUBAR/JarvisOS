@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% set m = data.matter %}
+{% block title %}{{ m.title }} — Case Command{% endblock %}
+{% block content %}
+<h1>{{ m.title }}</h1>
+<p class="sub">{{ m.caption or '—' }} · {{ m.case_number or 'no case number' }} ·
+   {{ m.forum or 'forum unrecorded' }} · {{ m.posture or 'posture unrecorded' }}</p>
+
+{% if m.boundary_date %}
+<div class="banner">
+  <strong>Boundary date {{ m.boundary_date }}</strong> — {{ m.boundary_label }}.
+  Conduct after this date is new conduct, not relitigation.
+</div>
+{% endif %}
+
+<div class="stat-row">
+  <div><div class="metric">{{ data.issues | length }}</div><div class="metric-label">Issues</div></div>
+  <div><div class="metric">{{ data.documents | length }}</div><div class="metric-label">Documents</div></div>
+  <div><div class="metric">{{ data.filings | length }}</div><div class="metric-label">Filings</div></div>
+  <div><div class="metric">{{ data.deadlines | length }}</div><div class="metric-label">Deadlines</div></div>
+  <div><div class="metric {{ 'missing' if data.preservation_summary.at_risk }}">{{ data.preservation_summary.at_risk }}</div>
+       <div class="metric-label">Preservation at risk</div></div>
+</div>
+
+<h2>Related matters</h2>
+{% if data.related %}
+<div class="table-wrap"><table>
+  <tr><th>Relationship</th><th>Matter</th><th>Case number</th><th>Note</th></tr>
+  {% for r in data.related %}
+  <tr><td><span class="chip">{{ r.relationship }}</span></td>
+      <td><a href="/matter?id={{ r.id }}">{{ r.title }}</a></td>
+      <td>{{ r.case_number or '—' }}</td><td>{{ r.notes or '' }}</td></tr>
+  {% endfor %}
+</table></div>
+{% else %}<p class="empty">No related matters linked.</p>{% endif %}
+
+<div class="split">
+  <div>
+    <h2>Parties</h2>
+    {% if data.parties %}<ul class="tight">
+      {% for p in data.parties %}<li>{{ p.title }} <span class="chip">{{ p.role or p.actor_type or '—' }}</span></li>{% endfor %}
+    </ul>{% else %}<p class="empty">No parties recorded.</p>{% endif %}
+
+    <h2>Counsel</h2>
+    {% if data.counsel %}<ul class="tight">
+      {% for c in data.counsel %}<li>{{ c.title }} — {{ c.represents or '—' }} ({{ c.firm or '—' }})</li>{% endfor %}
+    </ul>{% else %}<p class="empty">No counsel recorded.</p>{% endif %}
+  </div>
+  <div>
+    <h2>Judge / ALJ</h2>
+    {% if data.judges or data.aljs %}<ul class="tight">
+      {% for j in data.judges %}<li>Judge {{ j.title }} — {{ j.court or '' }}</li>{% endfor %}
+      {% for a in data.aljs %}<li>ALJ {{ a.title }} — {{ a.agency or '' }}
+        {% if a.reassigned_date %}<span class="chip warn">reassigned {{ a.reassigned_date }}</span>{% endif %}</li>{% endfor %}
+    </ul>{% else %}<p class="empty">No judge or ALJ recorded.</p>{% endif %}
+
+    <h2>Requested relief</h2>
+    {% if data.relief %}<ul class="tight">
+      {% for r in data.relief %}<li>{{ r.title }} —
+        {{ r.disposition or 'NO DISPOSITION RECORDED' }}</li>{% endfor %}
+    </ul>{% else %}<p class="empty">No relief recorded.</p>{% endif %}
+  </div>
+</div>
+
+<h2>Filings</h2>
+{% if data.filings %}
+<div class="table-wrap"><table>
+  <tr><th>Title</th><th>Filed</th><th>Status</th><th>Proof</th><th>Doc</th></tr>
+  {% for f in data.filings %}
+  <tr><td>{{ f.title }}</td><td>{{ f.filed_date or '—' }}</td>
+      <td><span class="chip {{ 'ok' if f.filing_status in ('FILED_CONFIRMED','DOCKETED','ENTERED') else 'warn' }}">{{ f.filing_status }}</span></td>
+      <td>{% if f.proof_type %}{{ f.proof_type }}{% else %}<span class="missing">none</span>{% endif %}</td>
+      <td>{{ f.doc_uid or '—' }}</td></tr>
+  {% endfor %}
+</table></div>
+{% else %}<p class="empty">No filings recorded.</p>{% endif %}
+
+<h2>Orders</h2>
+{% if data.orders %}
+<div class="table-wrap"><table>
+  <tr><th>Title</th><th>Entered</th><th>Final</th><th>Recommended decision</th>
+      <th>Appeal deadline</th><th>Exception deadline</th></tr>
+  {% for o in data.orders %}
+  <tr><td>{{ o.title }}</td><td>{{ o.entered_date or '—' }}</td>
+      <td>{{ 'yes' if o.is_final else 'no' }}</td>
+      <td>{{ 'yes' if o.is_recommended_decision else 'no' }}</td>
+      <td>{{ o.appeal_deadline or '—' }}</td><td>{{ o.exception_deadline or '—' }}</td></tr>
+  {% endfor %}
+</table></div>
+{% else %}<p class="empty">No orders recorded.</p>{% endif %}
+
+<h2>Deadlines</h2>
+{% if data.deadlines %}
+<div class="table-wrap"><table>
+  <tr><th>Due</th><th>Title</th><th>Type</th><th>Trigger</th><th>Status</th><th>Confirm against</th></tr>
+  {% for d in data.deadlines %}
+  <tr><td>{{ d.due_date or '—' }}</td><td>{{ d.title }}</td><td>{{ d.deadline_type }}</td>
+      <td>{{ d.trigger_event or '—' }}</td>
+      <td><span class="chip warn">{{ d.verification_status }}</span></td>
+      <td class="sub">{{ d.notes or '' }}</td></tr>
+  {% endfor %}
+</table></div>
+{% else %}<p class="empty">No deadlines recorded.</p>{% endif %}
+
+<h2>Issues <a href="/issues?matter_id={{ m.id }}" style="font-size:13px">(full matrix)</a></h2>
+<div class="table-wrap"><table>
+  <tr><th>Key</th><th>Issue</th><th>Status</th><th>Boundary</th><th>Scope</th><th>Verification</th></tr>
+  {% for i in data.issues %}
+  <tr><td>{{ i.issue_key or '—' }}</td><td>{{ i.title }}</td>
+      <td><span class="chip">{{ i.status }}</span></td>
+      <td>{{ i.boundary_classification }}</td><td>{{ i.hearing_scope or '—' }}</td>
+      <td><span class="chip {{ 'ok' if 'VERIFIED' in i.verification_status else 'warn' }}">{{ i.verification_status }}</span></td></tr>
+  {% endfor %}
+</table></div>
+
+<h2>Evidence</h2>
+{% if data.evidence %}
+<div class="table-wrap"><table>
+  <tr><th>Exhibit</th><th>Title</th><th>Type</th><th>Proves</th><th>Shared</th></tr>
+  {% for e in data.evidence %}
+  <tr><td>{{ e.exhibit_number or '—' }}</td><td>{{ e.title }}</td><td>{{ e.evidence_type or '—' }}</td>
+      <td>{{ e.proves or '—' }}</td><td>{{ 'yes' if e.shared_across_matters else 'no' }}</td></tr>
+  {% endfor %}
+</table></div>
+{% else %}<p class="empty">No evidence recorded.</p>{% endif %}
+
+<h2>Documents ({{ data.documents | length }})</h2>
+<div class="table-wrap"><table>
+  <tr><th>ID</th><th>Title</th><th>Date</th><th>Folder</th><th>Text</th><th>Verification</th></tr>
+  {% for d in data.documents[:100] %}
+  <tr><td><a href="/document?id={{ d.id }}">{{ d.doc_uid }}</a></td><td>{{ d.title }}</td>
+      <td>{{ d.document_date or '—' }}</td><td>{{ d.folder }}</td>
+      <td>{{ d.text_method }}{% if d.ocr_used %} <span class="chip warn">OCR</span>{% endif %}</td>
+      <td>{{ d.verification_status }}</td></tr>
+  {% endfor %}
+</table></div>
+
+<h2>Timeline (most recent 50)</h2>
+<div class="table-wrap"><table>
+  <tr><th>Date</th><th>Event</th><th>Type</th><th>Boundary</th><th>Verification</th></tr>
+  {% for e in data.timeline %}
+  <tr><td>{{ e.event_date or '—' }}</td><td>{{ e.title }}</td><td>{{ e.event_type or '—' }}</td>
+      <td>{{ e.boundary_classification }}</td><td>{{ e.verification_status }}</td></tr>
+  {% endfor %}
+</table></div>
+{% endblock %}

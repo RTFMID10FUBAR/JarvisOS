@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Timeline — Case Command{% endblock %}
+{% block content %}
+<h1>Timeline</h1>
+<p class="sub">{{ data.count }} event(s) matching the current filters.</p>
+
+<form class="filters" method="get" action="/timeline">
+  <label>Matter
+    <select name="matter_id">
+      <option value="">all</option>
+      {% for m in matters %}
+      <option value="{{ m.id }}" {{ 'selected' if data.filters.matter_id == m.id }}>{{ m.title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>From <input type="date" name="start" value="{{ data.filters.start or '' }}"></label>
+  <label>To <input type="date" name="end" value="{{ data.filters.end or '' }}"></label>
+  <label>Actor <input type="text" name="actor" value="{{ data.filters.actor or '' }}" placeholder="APCo, Staff, ALJ"></label>
+  <label>Filing type
+    <select name="filing_type">
+      <option value="">all</option>
+      {% for t in data.available.event_types %}
+      <option value="{{ t }}" {{ 'selected' if data.filters.filing_type == t }}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Boundary
+    <select name="boundary">
+      <option value="">all</option>
+      {% for b in data.available.boundary_classifications %}
+      <option value="{{ b }}" {{ 'selected' if data.filters.boundary == b }}>{{ b }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Verification
+    <select name="verification">
+      <option value="">all</option>
+      {% for v in ('VERIFIED_PRIMARY','VERIFIED_SECONDARY','PARTIALLY_VERIFIED','DISPUTED','INFERENCE','UNKNOWN','MISSING_SOURCE','SUPERSEDED') %}
+      <option value="{{ v }}" {{ 'selected' if data.filters.verification == v }}>{{ v }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Disputed
+    <select name="disputed">
+      <option value="">all</option>
+      <option value="1" {{ 'selected' if data.filters.disputed == true }}>disputed only</option>
+      <option value="0" {{ 'selected' if data.filters.disputed == false }}>undisputed only</option>
+    </select>
+  </label>
+  <label>Significance <input type="text" name="significance" value="{{ data.filters.significance or '' }}" placeholder="keyword"></label>
+  <button class="primary" type="submit">Filter</button>
+  <a href="/timeline"><button type="button">Reset</button></a>
+</form>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Date</th><th>Event</th><th>Matter</th><th>Type</th><th>Actor</th>
+      <th>Pre/post order</th><th>Boundary</th><th>Verification</th><th>Source</th></tr>
+  {% for e in data.events %}
+  <tr>
+    <td>{{ e.event_date or '—' }}</td>
+    <td>{{ e.title }}
+      {% if e.disputed %}<span class="chip urgent">disputed</span>{% endif %}
+      {% if e.legal_significance %}<div class="sub">{{ e.legal_significance }}</div>{% endif %}</td>
+    <td>{{ e.matter_slug or '—' }}</td>
+    <td>{{ e.event_type or '—' }}</td>
+    <td>{{ e.actor_name or '—' }}</td>
+    <td><span class="chip {{ 'warn' if e.relative_to_order == 'POST_ORDER' }}">{{ e.relative_to_order }}</span></td>
+    <td>{{ e.boundary_classification }}</td>
+    <td><span class="chip {{ 'ok' if 'VERIFIED' in e.verification_status else 'warn' }}">{{ e.verification_status }}</span></td>
+    <td>{% if e.doc_uid %}{{ e.doc_uid }} {{ e.source_page_or_paragraph or '' }}
+        {% else %}<span class="missing">no source</span>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="9" class="empty">No events match these filters.</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}

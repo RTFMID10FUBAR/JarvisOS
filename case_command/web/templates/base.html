@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Case Command{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">Case&nbsp;Command</a>
+  <nav>
+    <a href="/" class="{{ 'on' if nav_active == 'dashboard' }}">Dashboard</a>
+    <a href="/matter" class="{{ 'on' if nav_active == 'matters' }}">Matters</a>
+    <a href="/timeline" class="{{ 'on' if nav_active == 'timeline' }}">Timeline</a>
+    <a href="/issues" class="{{ 'on' if nav_active == 'issues' }}">Issue&nbsp;Matrix</a>
+    <a href="/compare" class="{{ 'on' if nav_active == 'compare' }}">Compare</a>
+    <a href="/hearing" class="{{ 'on' if nav_active == 'hearing' }}">Hearing</a>
+    <a href="/preservation" class="{{ 'on' if nav_active == 'preservation' }}">Preservation</a>
+    <a href="/approvals" class="{{ 'on' if nav_active == 'approvals' }}">Approvals</a>
+    <a href="/fleet" class="{{ 'on' if nav_active == 'fleet' }}">Fleet</a>
+    <a href="/health" class="{{ 'on' if nav_active == 'health' }}">Health</a>
+  </nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>
+  Case Command {{ version }} — canonical litigation record. Fleet proposes; only approved
+  items enter the record.
+</footer>
+</body>
+</html>

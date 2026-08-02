@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% set m = data.matter %}
+{% block title %}Hearing Mode — {{ m.title }}{% endblock %}
+{% block content %}
+<h1>Hearing Mode — {{ m.title }}</h1>
+<p class="sub">{{ m.case_number or 'no case number' }} · {{ m.forum or '' }}
+   {% if data.hearing_date %}· hearing {{ data.hearing_date }}{% endif %}</p>
+
+{% if data.readiness.blocker_count %}
+<div class="banner urgent">
+  <strong>{{ data.readiness.blocker_count }} blocker(s) before this is filing-ready.</strong>
+  <ul class="tight">
+    {% for f in data.readiness.findings if f.severity == 'BLOCKER' %}
+    <li>{{ f.title }} — {{ f.remedy or f.detail }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Scope statement</h2>
+  <p>{{ data.scope_statement }}</p>
+  <h3>Scope objection</h3>
+  <p>{{ data.scope_objection }}</p>
+</div>
+
+<h2>Opening statement</h2>
+<div class="card">
+  {% for line in data.opening_statement %}<div>{{ line }}</div>{% endfor %}
+</div>
+
+<h2>Rule-element checklist</h2>
+{% if data.rule_elements %}
+<div class="table-wrap"><table>
+  <tr><th>Rule</th><th>Element</th><th>Satisfied by</th></tr>
+  {% for entry in data.rule_elements %}
+    {% for element in entry.elements %}
+    <tr><td>{{ entry.rule.rule_number or entry.rule.title }}</td><td>{{ element }}</td>
+        <td><span class="chip gap">link evidence</span></td></tr>
+    {% else %}
+    <tr><td>{{ entry.rule.rule_number or entry.rule.title }}</td>
+        <td colspan="2"><span class="chip gap">no elements recorded for this rule</span></td></tr>
+    {% endfor %}
+  {% endfor %}
+</table></div>
+{% else %}
+<p class="empty">No rules linked to this matter yet. Ingest the governing rule or tariff
+  and link it, and the element checklist fills in here.</p>
+{% endif %}
+
+<h2>Issues in scope ({{ data.in_scope_issues | length }})</h2>
+<div class="table-wrap"><table>
+  <tr><th>Key</th><th>Issue</th><th>Boundary</th><th>Requested finding</th><th>Status</th></tr>
+  {% for i in data.in_scope_issues %}
+  <tr><td>{{ i.issue_key }}</td><td>{{ i.title }}</td><td>{{ i.boundary_classification }}</td>
+      <td>{{ i.requested_finding or '' }}{% if not i.requested_finding %}<span class="chip gap">missing</span>{% endif %}</td>
+      <td><span class="chip">{{ i.status }}</span></td></tr>
+  {% endfor %}
+</table></div>
+
+{% if data.out_of_scope_issues %}
+<h2>Outside the current hearing ({{ data.out_of_scope_issues | length }})</h2>
+<p class="sub">Marked out of scope, not deleted. They remain in the record and can be
+   raised if the tribunal opens the door.</p>
+<div class="table-wrap"><table>
+  <tr><th>Key</th><th>Issue</th><th>Status</th><th>Why out of scope</th></tr>
+  {% for i in data.out_of_scope_issues %}
+  <tr><td>{{ i.issue_key }}</td><td>{{ i.title }}</td><td>{{ i.status }}</td>
+      <td>{{ i.notes or i.boundary_classification }}</td></tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+
+<h2>Source-record questions</h2>
+<p class="sub">For each issue, where the opposing party's assertion comes from.</p>
+{% for q in data.witness_questions %}
+<div class="card" style="margin-bottom:.6rem">
+  <strong>{{ q.issue_key }} — {{ q.issue }}</strong>
+  <ul class="tight">{% for question in q.questions %}<li>{{ question }}</li>{% endfor %}</ul>
+</div>
+{% endfor %}
+
+<h2>Exhibit sequence</h2>
+{% if data.exhibit_sequence %}
+<div class="table-wrap"><table>
+  <tr><th>#</th><th>Exhibit</th><th>Type</th><th>Proves</th><th>Document</th></tr>
+  {% for e in data.exhibit_sequence %}
+  <tr><td>{{ e.exhibit_number or '—' }}</td><td>{{ e.title }}</td><td>{{ e.evidence_type or '—' }}</td>
+      <td>{{ e.proves or '—' }}</td><td>{{ e.doc_uid or '—' }}</td></tr>
+  {% endfor %}
+</table></div>
+{% else %}<p class="empty">No exhibits marked. Link evidence records to build the sequence.</p>{% endif %}
+
+<h2>Objections</h2>
+<div class="table-wrap"><table>
+  <tr><th>Ground</th><th>When</th><th>Say</th></tr>
+  {% for o in data.objections %}
+  <tr><td><strong>{{ o.ground }}</strong></td><td>{{ o.when }}</td><td>{{ o.say }}</td></tr>
+  {% endfor %}
+</table></div>
+
+<h2>Proposed findings</h2>
+<div class="table-wrap"><table>
+  <tr><th>Issue</th><th>Requested finding</th></tr>
+  {% for f in data.proposed_findings %}
+  <tr><td>{{ f.issue_key }}</td>
+      <td>{% if f.has_finding %}{{ f.finding }}{% else %}<span class="chip gap">not drafted</span>{% endif %}</td></tr>
+  {% endfor %}
+</table></div>
+
+<h2>Requested relief</h2>
+{% if data.requested_relief %}
+<ul class="tight">{% for r in data.requested_relief %}<li>{{ r.title }} — {{ r.disposition or 'no disposition' }}</li>{% endfor %}</ul>
+{% else %}<p class="empty">No relief recorded for this matter.</p>{% endif %}
+
+<h2>Closing outline</h2>
+<ol class="tight">{% for line in data.closing_outline %}<li>{{ line }}</li>{% endfor %}</ol>
+
+{% if data.preservation_at_risk %}
+<h2>Preserve before you leave the room</h2>
+<div class="banner urgent">
+  <ul class="tight">
+  {% for row in data.preservation_at_risk %}
+    <li>{{ row.issue_key or row.title }} —
+      {% for flag in row.risk_flags %}<span class="chip urgent">{{ flag }}</span>{% endfor %}</li>
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

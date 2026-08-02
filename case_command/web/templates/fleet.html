@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Fleet Review — Case Command{% endblock %}
+{% block content %}
+<h1>Fleet Review</h1>
+<p class="sub">{{ data.pending_count }} item(s) pending. Fleet proposes; nothing enters the
+   canonical record until you approve it item by item. Rejecting an item never deletes an
+   issue or a fact.</p>
+
+{% for p in data.proposals %}
+<div class="card" style="margin-bottom:1rem">
+  <h2>{{ p.job_type }} <span class="chip">{{ p.job_id }}</span>
+      <span class="chip {{ 'ok' if p.review_status == 'APPROVED' else 'warn' if p.review_status == 'PENDING' else '' }}">{{ p.review_status }}</span></h2>
+  <div class="sub">agent {{ p.agent or '—' }} · confidence
+    {{ '%.0f%%' % (100 * (p.confidence or 0)) }} · submitted {{ p.created_at }}
+    {% if p.notes %}<br>Validation warnings: {{ p.notes }}{% endif %}</div>
+
+  <div class="table-wrap"><table>
+    <tr><th>Type</th><th>Proposal</th><th>Source</th><th>Decision</th><th></th></tr>
+    {% for item in p.proposal_items %}
+    <tr>
+      <td><span class="chip">{{ item.item_type }}</span></td>
+      <td>
+        {{ item.data.get('title') or item.data.get('statement') or item.data.get('question') or item.payload[:160] }}
+        {% if item.data.get('verification_status') %}
+          <span class="chip {{ 'ok' if 'VERIFIED' in item.data.verification_status else 'warn' }}">{{ item.data.verification_status }}</span>
+        {% endif %}
+      </td>
+      <td>{% if item.source_document_id %}doc #{{ item.source_document_id }}
+            {{ item.source_page_or_paragraph or '' }}
+          {% else %}<span class="missing">no source</span>{% endif %}</td>
+      <td><span class="chip {{ 'ok' if item.decision == 'APPROVED' else 'urgent' if item.decision == 'REJECTED' else 'warn' }}">{{ item.decision }}</span>
+          {% if item.applied %}<span class="chip ok">applied #{{ item.applied_record_id }}</span>{% endif %}</td>
+      <td>
+        {% if item.decision == 'PENDING' %}
+        <form method="post" action="/fleet/decide" class="inline">
+          <input type="hidden" name="item_id" value="{{ item.id }}">
+          <input type="hidden" name="reviewer" value="jacob">
+          <button class="primary" name="decision" value="APPROVED" type="submit">Approve</button>
+        </form>
+        <form method="post" action="/fleet/decide" class="inline">
+          <input type="hidden" name="item_id" value="{{ item.id }}">
+          <input type="hidden" name="reviewer" value="jacob">
+          <button class="danger" name="decision" value="REJECTED" type="submit">Reject</button>
+        </form>
+        {% else %}
+        <span class="sub">{{ item.decided_by }} {{ item.decided_at }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</div>
+{% else %}
+<div class="banner">No Fleet proposals have been submitted.</div>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Appeal Preservation — Case Command{% endblock %}
+{% block content %}
+<h1>Appeal Preservation</h1>
+<p class="sub">{{ data.total_at_risk }} issue(s) at risk across {{ data.sections | length }} matter(s).
+   A missing ruling stays visible until it is answered.</p>
+
+<form class="filters" method="get" action="/preservation">
+  <label>Matter
+    <select name="matter_id" onchange="this.form.submit()">
+      <option value="">all matters</option>
+      {% for m in data.matters %}
+      <option value="{{ m.id }}" {{ 'selected' if data.matter_id == m.id }}>{{ m.title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="primary" type="submit">Filter</button>
+</form>
+
+{% for section in data.sections %}
+<h2>{{ section.matter.title }}
+  {% if section.at_risk %}<span class="chip urgent">{{ section.at_risk }} at risk</span>
+  {% else %}<span class="chip ok">no risk detected</span>{% endif %}</h2>
+
+{% if section.deadlines %}
+<div class="banner warn">
+  <strong>Deadlines</strong>
+  <ul class="tight">
+  {% for d in section.deadlines %}
+    <li>{{ d.due_date }} — {{ d.title }}
+      <span class="chip warn">{{ d.verification_status }}</span>
+      <div class="sub">{{ d.notes }}</div></li>
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="table-wrap">
+<table>
+  <tr>
+    <th>Issue</th><th>Raised</th><th>Where raised</th><th>Date raised</th>
+    <th>Ruling requested</th><th>Ruling issued</th><th>Ignored</th>
+    <th>Exception required</th><th>Exception filed</th><th>Final order treatment</th>
+    <th>Appeal deadline</th><th>Standard of review</th><th>Remedy</th><th>Risk</th>
+  </tr>
+  {% for row in section.rows %}
+  <tr>
+    <td><strong>{{ row.issue_key or '—' }}</strong><br>{{ row.issue_title }}
+        <div class="sub">{{ row.issue_status }}</div></td>
+    <td>{{ 'yes' if row.raised else 'NO' }}</td>
+    <td>{{ row.where_raised or '—' }}</td>
+    <td>{{ row.date_raised or '—' }}</td>
+    <td>{{ 'yes' if row.ruling_requested else 'no' }}</td>
+    <td>{% if row.ruling_issued %}yes{% else %}<span class="missing">no</span>{% endif %}</td>
+    <td>{% if row.ignored %}<span class="chip urgent">ignored</span>{% else %}no{% endif %}</td>
+    <td>{{ 'yes' if row.exception_required else 'no' }}</td>
+    <td>{% if row.exception_filed %}yes{% elif row.exception_required %}<span class="missing">NOT FILED</span>{% else %}—{% endif %}</td>
+    <td>{{ row.final_order_treatment or '—' }}</td>
+    <td>{{ row.appeal_deadline or '—' }}</td>
+    <td>{{ row.standard_of_review or '' }}{% if not row.standard_of_review %}<span class="chip gap">missing</span>{% endif %}</td>
+    <td>{{ row.remedy or '—' }}</td>
+    <td>{% for flag in row.risk_flags %}<span class="chip urgent">{{ flag }}</span>{% else %}<span class="chip ok">ok</span>{% endfor %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="14" class="empty">No issues in this matter.</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endfor %}
+{% endblock %}

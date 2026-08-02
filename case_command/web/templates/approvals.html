@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Approvals — Case Command{% endblock %}
+{% block content %}
+<h1>Waiting on you</h1>
+<p class="sub">Case Command asks at most two things per document: which matter, and whether
+   it is filed or working material. Everything else is automated.</p>
+
+{% if data.approvals %}
+{% for a in data.approvals %}
+<div class="card" style="margin-bottom:.7rem">
+  <div><span class="chip">{{ a.kind }}</span>
+       {% if a.target_table %}<span class="chip">{{ a.target_table }} #{{ a.target_id }}</span>{% endif %}</div>
+  <p><strong>{{ a.question }}</strong></p>
+  {% if a.document %}
+  <div class="sub">{{ a.document.doc_uid }} · {{ a.document.original_filename }}
+    · {{ a.document.folder }} · {{ a.document.text_method }}
+    {% if a.document.ocr_used %}<span class="chip warn">OCR</span>{% endif %}
+    · <a href="/document?id={{ a.document.id }}">open</a></div>
+  {% endif %}
+  <form method="post" action="/approvals/resolve" class="inline">
+    <input type="hidden" name="approval_id" value="{{ a.id }}">
+    <input type="hidden" name="reviewer" value="jacob">
+    <select name="decision">
+      {% for option in a.option_list %}
+      <option value="{{ option }}" {{ 'selected' if option == a.proposed }}>{{ option }}</option>
+      {% endfor %}
+      <option value="Defer">Defer</option>
+    </select>
+    <button class="primary" type="submit">Record decision</button>
+  </form>
+  {% if a.proposed %}<div class="sub">Proposed: {{ a.proposed }}</div>{% endif %}
+</div>
+{% endfor %}
+{% else %}
+<div class="banner">Nothing is waiting for a decision.</div>
+{% endif %}
+{% endblock %}

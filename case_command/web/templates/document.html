@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% set d = data.document %}
+{% block title %}{{ d.doc_uid }} — Case Command{% endblock %}
+{% block content %}
+<h1>{{ d.doc_uid }} — {{ d.title }}</h1>
+<p class="sub">{{ d.original_filename }} · {{ d.folder }} · {{ d.byte_size }} bytes ·
+   {{ d.file_kind }} · {{ d.page_count or '?' }} page(s)</p>
+
+<div class="grid">
+  <div class="card">
+    <div class="metric-label">Storage (one physical location)</div>
+    <div style="word-break:break-all">{{ d.storage_path }}</div>
+    <div class="metric-label" style="margin-top:.6rem">SHA-256</div>
+    <div style="word-break:break-all;font-size:12px">{{ d.sha256 }}</div>
+  </div>
+  <div class="card">
+    <div class="metric-label">Extraction</div>
+    <div>method <strong>{{ d.text_method }}</strong>
+      {% if d.ocr_used %}<span class="chip warn">OCR — not exact</span>{% endif %}</div>
+    <div>confidence {{ d.text_confidence if d.text_confidence is not none else '—' }}</div>
+    <div>{{ d.text_chars or 0 }} characters</div>
+    {% if d.extraction_error %}<div class="missing">{{ d.extraction_error }}</div>{% endif %}
+  </div>
+  <div class="card">
+    <div class="metric-label">Classification</div>
+    <div>{{ d.classification_rule or '—' }}</div>
+    <div>confidence {{ '%.0f%%' % (100 * (d.classification_confidence or 0)) }}</div>
+    <div>{{ 'approved' if d.classification_approved else 'AWAITING APPROVAL' }}</div>
+    <div class="metric-label" style="margin-top:.6rem">Verification</div>
+    <div><span class="chip {{ 'ok' if 'VERIFIED' in d.verification_status else 'warn' }}">{{ d.verification_status }}</span></div>
+  </div>
+</div>
+
+{% if data.duplicates %}
+<h2>Byte-identical copies</h2>
+<div class="banner warn">
+  This exact content exists at {{ data.duplicates | length }} other location(s). One is
+  canonical; the rest are duplicates, detected by hash rather than by name.
+  <ul class="tight">
+  {% for dup in data.duplicates %}<li>{{ dup.doc_uid }} — {{ dup.storage_path }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<h2>Matter links</h2>
+{% if data.links %}
+<div class="table-wrap"><table>
+  <tr><th>Matter</th><th>Relationship</th><th>Limited purpose</th><th>Boundary</th><th>Approved</th></tr>
+  {% for l in data.links %}
+  <tr><td><a href="/matter?id={{ l.matter_id }}">{{ l.matter_title }}</a></td>
+      <td>{{ l.relationship }}</td><td>{{ l.limited_purpose or '—' }}</td>
+      <td>{{ l.boundary_classification or '—' }}</td>
+      <td>{{ 'yes' if l.approved else 'pending' }}</td></tr>
+  {% endfor %}
+</table></div>
+<p class="sub">Stored once. Other matters reference it through these links — never a copy.</p>
+{% else %}<p class="empty">No cross-matter links.</p>{% endif %}
+
+{% if data.filings %}
+<h2>Filing status</h2>
+<div class="table-wrap"><table>
+  <tr><th>Title</th><th>Status</th><th>Proof type</th><th>Proof reference</th></tr>
+  {% for f in data.filings %}
+  <tr><td>{{ f.title }}</td>
+      <td><span class="chip {{ 'ok' if f.proof_type else 'warn' }}">{{ f.filing_status }}</span></td>
+      <td>{{ f.proof_type or '—' }}</td><td>{{ f.proof_reference or '—' }}</td></tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+
+{% if data.events %}
+<h2>Proposed timeline events ({{ data.events | length }})</h2>
+<div class="table-wrap"><table>
+  <tr><th>Date</th><th>Event</th><th>Locator</th><th>Boundary</th><th>Approved</th></tr>
+  {% for e in data.events %}
+  <tr><td>{{ e.event_date }}</td><td>{{ e.title }}</td>
+      <td>{{ e.source_page_or_paragraph or '—' }}</td>
+      <td>{{ e.boundary_classification }}</td>
+      <td>{{ 'yes' if e.approved else 'pending' }}</td></tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+
+<h2>Extracted text</h2>
+{% if data.text %}<pre>{{ data.text[:60000] }}</pre>
+{% else %}<p class="empty">No text extracted. The document is indexed and visible, not hidden.</p>{% endif %}
+
+<h2>Audit trail</h2>
+<div class="table-wrap"><table>
+  <tr><th>When</th><th>Actor</th><th>Action</th><th>Summary</th></tr>
+  {% for a in data.audit %}
+  <tr><td>{{ a.ts }}</td><td>{{ a.actor }}</td><td>{{ a.action }}</td><td>{{ a.summary }}</td></tr>
+  {% endfor %}
+</table></div>
+{% endblock %}
