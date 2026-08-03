@@ -222,6 +222,16 @@ def ingest_path(config: Config, conn: sqlite3.Connection, path: Path, *,
         result.document_id = existing["id"]
         result.doc_uid = existing["doc_uid"]
         result.duplicate_of = existing["doc_uid"]
+        # Record where the copy physically lives. Without this the extra
+        # location exists only in the audit log, and the triage list cannot
+        # answer "where are the copies?" — which is how the wrong copy gets
+        # deleted during a cleanup.
+        conn.execute(
+            "INSERT INTO document_copies (document_id, path, folder, sha256, byte_size) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET still_present=1",
+            (existing["id"], str(path), folder_of(config, path) or "",
+             digest, path.stat().st_size),
+        )
         # A byte-identical file in a second location is a duplicate, not a new
         # document. Archiving it is proposed, never performed.
         approval_id = _open_approval(
@@ -269,7 +279,7 @@ def ingest_path(config: Config, conn: sqlite3.Connection, path: Path, *,
     # --- 6 & 9. metadata and entity identification -------------------------
     found = ent.extract_entities(text, pages)
     result.entities = {k: [c.to_dict() for c in v] for k, v in found.items()}
-    doc_date = ent.document_date(found)
+    doc_date, date_source = ent.document_date(found, text, pages)
     case_number = ent.primary_case_number(found)
 
     # --- 8. classify the matter (a proposal, not an assignment) ------------
@@ -288,6 +298,15 @@ def ingest_path(config: Config, conn: sqlite3.Connection, path: Path, *,
     candidates = _matters_in_folder(conn, classification.folder)
     proposed_matter = candidates[0] if len(candidates) == 1 else None
     matter_id = proposed_matter["id"] if proposed_matter else None
+
+    # A verbatim line lifted from the document, for the chronological triage
+    # list. It is an extract, never a generated summary: no model writes it, so
+    # it cannot describe something the document does not say.
+    from .triage import extract_line as _extract_line
+
+    snippet, snippet_locator = _extract_line(text, pages)
+    if snippet is None:
+        snippet, snippet_locator = ("(no text could be extracted)", None)
 
     # --- 7. canonical document ID and the row itself -----------------------
     doc_uid = next_doc_uid(conn)
@@ -311,6 +330,10 @@ def ingest_path(config: Config, conn: sqlite3.Connection, path: Path, *,
         "extraction_error": extraction.error,
         "analysis_version": ANALYSIS_VERSION,
         "document_date": doc_date,
+        "date_source": date_source,
+        "extract_line": snippet,
+        "extract_locator": snippet_locator,
+        "triage_status": "UNREVIEWED",
         "classification_rule": classification.rule,
         "classification_confidence": classification.confidence,
         "classification_approved": 0,

@@ -14,7 +14,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from .. import audit, backup, checks, fleet, health, migrate_tree, packets, preservation, views, watcher
+from .. import (
+    audit, backup, checks, fleet, health, migrate_tree, packets, preservation,
+    triage, views, watcher,
+)
 from ..classify import classify_text
 from ..config import (
     ARCHIVE, FINAL_FILINGS, INBOX, MORTGAGE, PSC_AEP, SHARED_EVIDENCE,
@@ -902,6 +905,158 @@ class TestViews(CaseCommandTest):
         self.assertGreater(result["difference_count"], 0)
         self.assertTrue(result["left_text"])
         self.assertTrue(result["right_text"])
+
+
+# ===========================================================================
+# Chronological triage
+# ===========================================================================
+class TestTriage(CaseCommandTest):
+
+    def test_chronology_is_ordered_and_dates_carry_provenance(self):
+        self.ingest_all()
+        triage.backfill_extracts(self.conn)
+        report = triage.chronology(self.conn)
+
+        dates = [e["date"] for e in report["dated"]]
+        self.assertEqual(dates, sorted(dates), "chronology must be in date order")
+        for entry in report["dated"]:
+            self.assertTrue(entry["date_source"], "every date must say where it came from")
+
+    def test_a_documents_own_date_beats_a_date_it_merely_cites(self):
+        """The APCo answer cites a September 2025 order but was served in March 2026."""
+        result = ingest_path(self.config, self.conn, self.paths["apco_answer"])
+        row = self.conn.execute("SELECT * FROM documents WHERE id=?",
+                                (result.document_id,)).fetchone()
+        self.assertEqual(row["document_date"], "2026-03-20")
+        self.assertEqual(row["date_source"], "service date")
+
+    def test_signature_block_date_is_preferred(self):
+        result = ingest_path(self.config, self.conn, self.paths["psc_complaint"])
+        row = self.conn.execute("SELECT * FROM documents WHERE id=?",
+                                (result.document_id,)).fetchone()
+        self.assertEqual(row["document_date"], "2026-03-05")
+        self.assertEqual(row["date_source"], "signature block")
+
+    def test_entered_field_dates_an_order(self):
+        result = ingest_path(self.config, self.conn, self.paths["psc_order"])
+        row = self.conn.execute("SELECT * FROM documents WHERE id=?",
+                                (result.document_id,)).fetchone()
+        self.assertEqual(row["document_date"], "2025-09-03")
+        self.assertEqual(row["date_source"], "entered date")
+
+    def test_undated_documents_are_listed_separately_not_guessed(self):
+        self.ingest_all()
+        triage.backfill_extracts(self.conn)
+        report = triage.chronology(self.conn)
+        self.assertGreater(report["undated_count"], 0)
+        for entry in report["undated"]:
+            self.assertIsNone(entry["date"])
+            self.assertEqual(entry["date_source"], "no date found")
+        # An undated document never leaks into the dated list.
+        self.assertTrue(all(e["date"] for e in report["dated"]))
+
+    def test_description_is_a_verbatim_extract_from_the_document(self):
+        result = ingest_path(self.config, self.conn, self.paths["psc_complaint"])
+        triage.backfill_extracts(self.conn)
+        row = self.conn.execute("SELECT * FROM documents WHERE id=?",
+                                (result.document_id,)).fetchone()
+        self.assertEqual(row["extract_line"], "FORMAL COMPLAINT")
+        # The line must appear verbatim in the source text.
+        source = Path(row["text_path"]).read_text(encoding="utf-8")
+        self.assertIn(row["extract_line"], source)
+
+    def test_unreadable_document_says_so_rather_than_showing_blank(self):
+        broken = self.root / INBOX / "scan.xlsx"
+        broken.write_bytes(b"not a spreadsheet")
+        ingest_path(self.config, self.conn, broken)
+        triage.backfill_extracts(self.conn)
+        report = triage.chronology(self.conn)
+        entry = next(e for e in report["dated"] + report["undated"]
+                     if e["filename"] == "scan.xlsx")
+        self.assertIn("no text", entry["extract"].lower())
+        self.assertIn("UNREADABLE", entry["flags"])
+
+    def test_copy_locations_are_recorded_and_shown(self):
+        """A byte-identical file in a second folder is recorded as a copy location.
+
+        This is the "what is a copy" answer: one canonical document plus the
+        other places the identical bytes are sitting. Without this the extra
+        path exists only in the audit log, and a cleanup could delete the wrong
+        one.
+        """
+        canonical = ingest_path(self.config, self.conn, self.paths["psc_complaint"])
+        duplicate = ingest_path(self.config, self.conn, self.paths["duplicate"])
+        self.assertEqual(duplicate.status, "duplicate")
+
+        groups = triage.copy_locations(self.conn)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["doc_uid"], canonical.doc_uid)
+        paths = {c["path"] for c in groups[0]["copies"]}
+        self.assertIn(str(self.paths["duplicate"]), paths)
+
+        triage.backfill_extracts(self.conn)
+        report = triage.chronology(self.conn)
+        entry = next(e for e in report["dated"] + report["undated"]
+                     if e["doc_uid"] == canonical.doc_uid)
+        self.assertEqual(entry["copy_count"], 1)
+        self.assertTrue(any("COPY" in flag for flag in entry["flags"]))
+        self.assertEqual(report["redundant_copies"], 1)
+
+    def test_propose_copy_archive_moves_and_deletes_nothing(self):
+        ingest_path(self.config, self.conn, self.paths["psc_complaint"])
+        ingest_path(self.config, self.conn, self.paths["duplicate"])
+
+        before_docs = self.conn.execute("SELECT COUNT(*) n FROM documents").fetchone()["n"]
+        outcome = triage.propose_copy_archive(self.conn)
+
+        self.assertEqual(outcome["proposed"], 1)
+        self.assertEqual(outcome["moved"], 0)
+        self.assertEqual(outcome["deleted"], 0)
+        # Both files still on disk, document count unchanged.
+        self.assertTrue(self.paths["duplicate"].exists())
+        self.assertTrue(self.paths["psc_complaint"].exists())
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) n FROM documents").fetchone()["n"],
+            before_docs)
+
+    def test_copy_records_cannot_be_deleted(self):
+        ingest_path(self.config, self.conn, self.paths["psc_complaint"])
+        ingest_path(self.config, self.conn, self.paths["duplicate"])
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute("DELETE FROM document_copies")
+
+    def test_triage_decision_is_recorded_and_reversible(self):
+        result = ingest_path(self.config, self.conn, self.paths["draft"])
+        triage.set_status(self.conn, result.document_id, "IRRELEVANT",
+                          reviewer="test", note="not related to any matter")
+        row = self.conn.execute("SELECT * FROM documents WHERE id=?",
+                                (result.document_id,)).fetchone()
+        self.assertEqual(row["triage_status"], "IRRELEVANT")
+        self.assertEqual(row["triage_by"], "test")
+
+        # Still in the record, still searchable, not deleted.
+        self.assertEqual(row["status"], "ACTIVE")
+        self.assertTrue(Path(row["storage_path"]).exists())
+
+        # And the decision can be taken back.
+        triage.set_status(self.conn, result.document_id, "KEEP", reviewer="test")
+        self.assertEqual(
+            self.conn.execute("SELECT triage_status FROM documents WHERE id=?",
+                              (result.document_id,)).fetchone()["triage_status"], "KEEP")
+
+    def test_triage_rejects_an_unknown_status(self):
+        result = ingest_path(self.config, self.conn, self.paths["draft"])
+        with self.assertRaises(ValueError):
+            triage.set_status(self.conn, result.document_id, "DELETE")
+
+    def test_csv_export_contains_every_row(self):
+        self.ingest_all()
+        triage.backfill_extracts(self.conn)
+        report = triage.chronology(self.conn)
+        csv_text = triage.to_csv(report)
+        lines = [line for line in csv_text.splitlines() if line.strip()]
+        self.assertEqual(len(lines), report["total"] + 1)   # + header
+        self.assertIn("what_it_is_extract", lines[0])
 
 
 if __name__ == "__main__":

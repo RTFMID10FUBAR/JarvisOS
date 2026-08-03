@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from .. import __version__, audit, fleet, health, views
-from ..config import Config, load_config
+from .. import __version__, audit, fleet, health, triage, views
+from ..config import Config, LITIGATION_FOLDERS, load_config
 from ..db import open_database, utcnow
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -107,6 +107,8 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
 
         routes: dict[str, Callable[[dict[str, list[str]]], None]] = {
             "/": self.view_dashboard,
+            "/triage": self.view_triage,
+            "/triage.csv": self.export_triage_csv,
             "/matter": self.view_matter,
             "/timeline": self.view_timeline,
             "/compare": self.view_compare,
@@ -139,6 +141,8 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
         form = parse_qs(raw)
 
         try:
+            if parsed.path == "/triage/decide":
+                return self.post_triage_decide(form)
             if parsed.path == "/approvals/resolve":
                 return self.post_resolve_approval(form)
             if parsed.path == "/fleet/decide":
@@ -161,6 +165,60 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
         try:
             self._render("dashboard.html", nav_active="dashboard",
                          data=views.dashboard(conn))
+        finally:
+            conn.close()
+
+    def _triage_report(self, params: dict[str, list[str]]):
+        conn = self._conn()
+        try:
+            triage.backfill_extracts(conn)
+            return conn, triage.chronology(
+                conn,
+                matter_id=self._int(params, "matter_id"),
+                folder=self._str(params, "folder"),
+                status=self._str(params, "status"),
+                include_duplicates=self._str(params, "hide_copies") != "1",
+            )
+        except BaseException:
+            conn.close()
+            raise
+
+    def view_triage(self, params: dict[str, list[str]]) -> None:
+        conn, data = self._triage_report(params)
+        try:
+            self._render("triage.html", nav_active="triage", data=data,
+                         matters=views.list_matters(conn),
+                         folders=LITIGATION_FOLDERS,
+                         statuses=triage.TRIAGE_STATUSES)
+        finally:
+            conn.close()
+
+    def export_triage_csv(self, params: dict[str, list[str]]) -> None:
+        conn, data = self._triage_report(params)
+        try:
+            body = triage.to_csv(data).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition",
+                             'attachment; filename="case_command_chronology.csv"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        finally:
+            conn.close()
+
+    def post_triage_decide(self, form: dict[str, list[str]]) -> None:
+        document_id = int((form.get("document_id") or ["0"])[0])
+        status = (form.get("status") or [""])[0]
+        reviewer = (form.get("reviewer") or ["jacob"])[0]
+        note = (form.get("note") or [""])[0] or None
+
+        conn = self._conn()
+        try:
+            triage.set_status(conn, document_id, status, reviewer=reviewer, note=note)
+            self._redirect("/triage")
+        except ValueError as exc:
+            self._send(f"<h1>400</h1><p>{exc}</p>".encode("utf-8"), 400)
         finally:
             conn.close()
 

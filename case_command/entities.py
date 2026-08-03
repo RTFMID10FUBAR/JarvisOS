@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Iterable
 
 MONTHS = {
@@ -278,14 +278,122 @@ def primary_case_number(found: dict[str, list[Candidate]]) -> str | None:
     return candidates[0].value if candidates else None
 
 
-def document_date(found: dict[str, list[Candidate]]) -> str | None:
-    """Best guess at the document's own date: the earliest date on page 1."""
-    candidates = [c for c in found.get("date", []) if c.locator in ("p.1", "char 0")
-                  or c.locator.startswith("char ")]
-    pool = candidates or found.get("date", [])
-    if not pool:
-        return None
-    return min(c.value for c in pool)
+#: Phrases that introduce a document's OWN date, with a priority rank.
+#:
+#: Ranking matters more than matching. A legal filing cites many dates, and
+#: "entered September 3, 2025" inside an answer refers to somebody else's order,
+#: not to this document. So a signature block always beats a mid-sentence
+#: "entered", and a field-style cue at the start of a line beats the same words
+#: buried in a paragraph.
+#:
+#: rank 1 is the most trustworthy.
+_DATE_CUES: tuple[tuple[str, str, int], ...] = (
+    (r"\bthis\s+\d{1,2}(?:st|nd|rd|th)?\s+day\s+of\s+", "signature block", 1),
+    (r"\bdated\s*:?\s*", "dated line", 2),
+    (r"\bserved\s+(?:upon[^.\n]{0,60})?(?:by[^.\n]{0,40})?\s*(?:on)?\s*", "service date", 3),
+    (r"\bdate\s+entered\s*:?\s*", "entered date", 4),
+    (r"\bdate\s+filed\s*:?\s*", "filed date", 4),
+    (r"\bentered\s*(?:on)?\s*:?\s*", "entered date", 5),
+    (r"\bfiled\s*(?:on)?\s*:?\s*", "filed date", 5),
+    (r"\bissued\s*(?:on)?\s*:?\s*", "issued date", 5),
+    (r"\bdate\s*:\s*", "date line", 6),
+)
+
+#: A cue at the start of a line is a labelled field ("Entered: September 3,
+#: 2025"). The same words mid-paragraph are prose about some other document, so
+#: they are demoted below every position-independent cue.
+_MID_SENTENCE_PENALTY = 6
+
+#: How much of a document counts as its header. Court and agency filings put the
+#: caption block — court, parties, case number, document title — at the top of
+#: page one, so almost everything needed to identify a document lives here.
+HEADER_CHARS = 1500
+HEADER_LINES = 30
+
+#: A cue found in the header outranks the same cue found in the body. "Entered:"
+#: in a caption block dates this document; "entered" three pages in is prose
+#: about somebody else's order.
+_HEADER_BONUS = -2
+
+
+def header_zone(text: str, pages: list[str] | None = None) -> str:
+    """The caption region: page one's top, where a filing identifies itself.
+
+    Two things follow from this, and both matter for scanned documents:
+    identification usually needs only page one, and OCR can therefore start
+    there instead of processing an entire filing before anything is known.
+    """
+    if not text:
+        return ""
+    source = pages[0] if pages else text
+    lines = source.splitlines()[:HEADER_LINES]
+    return "\n".join(lines)[:HEADER_CHARS]
+
+#: How far after a cue a date still counts as belonging to it.
+_CUE_WINDOW = 60
+
+
+def document_date(found: dict[str, list[Candidate]], text: str = "",
+                  pages: list[str] | None = None) -> tuple[str | None, str]:
+    """The document's own date, and where that reading came from.
+
+    Returns ``(iso_date_or_None, source_label)``. The label matters: a date read
+    off a signature block is evidence, a date inferred from position is a guess,
+    and the two must never look alike in a chronology.
+    """
+    dates = found.get("date", [])
+    if not dates:
+        return (None, "no date found")
+
+    # 1. Collect every cue hit, then take the best-ranked one. First-match-wins
+    #    would let whichever cue appears earliest in the file decide, which is
+    #    exactly how a cited order's date hijacks the document's own date.
+    if text:
+        header_len = len(header_zone(text, pages))
+        hits: list[tuple[int, int, str, str]] = []   # (rank, position, iso, label)
+        for pattern, label, base_rank in _DATE_CUES:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                line_start = text.rfind("\n", 0, match.start()) + 1
+                at_line_start = not text[line_start:match.start()].strip()
+                rank = base_rank if at_line_start else base_rank + _MID_SENTENCE_PENALTY
+                if match.start() < header_len:
+                    rank += _HEADER_BONUS   # caption-block dates identify the filing
+
+                window = text[match.end():match.end() + _CUE_WINDOW]
+                iso = parse_date(window)
+                if not iso:
+                    # "this 5th day of March, 2026" splits day from month/year.
+                    stitched = re.match(
+                        r"\s*(" + "|".join(MONTHS) + r")\.?,?\s+(\d{4})",
+                        window, re.IGNORECASE)
+                    day_match = re.search(r"(\d{1,2})(?:st|nd|rd|th)?\s+day\s+of\s*$",
+                                          text[:match.end()], re.IGNORECASE)
+                    if stitched and day_match:
+                        month = MONTHS[stitched.group(1).lower().rstrip(".")]
+                        try:
+                            iso = date(int(stitched.group(2)), month,
+                                       int(day_match.group(1))).isoformat()
+                        except ValueError:
+                            iso = None
+                if iso:
+                    hits.append((rank, match.start(), iso, label))
+
+        if hits:
+            # Best rank wins; among equals, the later occurrence wins, because
+            # signature and service blocks sit at the end of a filing.
+            rank, _pos, iso, label = min(hits, key=lambda h: (h[0], -h[1]))
+            qualifier = "" if rank <= len(_DATE_CUES) else " (mid-sentence, verify)"
+            return (iso, label + qualifier)
+
+    # 2. No cue. A document is normally dated on or after everything it cites,
+    #    so the LATEST date is a better reading than the earliest — but it is
+    #    still an inference, and it is labelled as one.
+    #    Future dates are excluded: those are deadlines, not the document's date.
+    today = datetime.now(timezone.utc).date().isoformat()
+    past = [c.value for c in dates if c.value <= today]
+    if past:
+        return (max(past), "inferred (latest date in document)")
+    return (min(c.value for c in dates), "inferred (no past date found)")
 
 
 def unknowns_for_missing(found: dict[str, list[Candidate]],

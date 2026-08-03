@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Triage — Case Command{% endblock %}
+{% block content %}
+{% macro row(e) %}
+  <tr>
+    <td>{% if e.date %}{{ e.date }}<div class="sub">{{ e.date_source }}</div>
+        {% else %}<span class="missing">—</span><div class="sub">{{ e.date_source }}</div>{% endif %}</td>
+    <td><a href="/document?id={{ e.id }}">{{ e.doc_uid }}</a></td>
+    <td>{{ e.extract }}
+      <div class="sub">{{ e.filename }}{% if e.extract_locator %} · {{ e.extract_locator }}{% endif %}</div></td>
+    <td>{{ e.matter or '—' }}</td>
+    <td>{{ e.folder }}</td>
+    <td>{% for flag in e.flags %}<span class="chip {{ 'urgent' if flag in ('COPY','DUPLICATE','UNREADABLE') else 'warn' }}">{{ flag }}</span>{% else %}—{% endfor %}
+      {% if e.copy_count > 1 %}<span class="chip">{{ e.copy_count }} copies</span>{% endif %}</td>
+    <td><span class="chip {{ 'ok' if e.triage_status == 'KEEP' else 'urgent' if e.triage_status in ('DUPLICATE','IRRELEVANT') else 'warn' }}">{{ e.triage_status }}</span>
+      {% if e.triage_note %}<div class="sub">{{ e.triage_note }}</div>{% endif %}</td>
+    <td>
+      <form method="post" action="/triage/decide" class="inline">
+        <input type="hidden" name="document_id" value="{{ e.id }}">
+        <input type="hidden" name="reviewer" value="jacob">
+        <select name="status">
+          {% for s in ('KEEP','DUPLICATE','SUPERSEDED','IRRELEVANT','ARCHIVE_PROPOSED','UNREVIEWED') %}
+          <option value="{{ s }}" {{ 'selected' if s == e.triage_status }}>{{ s }}</option>
+          {% endfor %}
+        </select>
+        <button class="primary" type="submit">Set</button>
+      </form>
+    </td>
+  </tr>
+{% endmacro %}
+
+<h1>Chronological Triage</h1>
+<p class="sub">{{ data.total }} document(s) · {{ data.unreviewed }} unreviewed ·
+   {{ data.duplicate_groups }} duplicate group(s) · {{ data.undated_count }} undated.
+   The description is a line lifted <strong>verbatim</strong> from the document, with the
+   locator it came from — no model wrote it. Marking something a duplicate or irrelevant
+   changes its status; it is never deleted or moved.</p>
+
+<form class="filters" method="get" action="/triage">
+  <label>Matter
+    <select name="matter_id">
+      <option value="">all</option>
+      {% for m in matters %}
+      <option value="{{ m.id }}" {{ 'selected' if data.filters.matter_id == m.id }}>{{ m.title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Folder
+    <select name="folder">
+      <option value="">all</option>
+      {% for f in folders %}
+      <option value="{{ f }}" {{ 'selected' if data.filters.folder == f }}>{{ f }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Status
+    <select name="status">
+      <option value="">all</option>
+      {% for s in statuses %}
+      <option value="{{ s }}" {{ 'selected' if data.filters.status == s }}>{{ s }}
+        ({{ data.status_counts.get(s, 0) }})</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="primary" type="submit">Filter</button>
+  <a href="/triage"><button type="button">Reset</button></a>
+  <a href="/triage.csv"><button type="button">Export CSV</button></a>
+</form>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Date</th><th>ID</th><th>What it is (verbatim extract)</th><th>Matter</th>
+      <th>Folder</th><th>Flags</th><th>Status</th><th>Decide</th></tr>
+  {% for e in data.dated %}{{ row(e) }}{% endfor %}
+  {% if not data.dated %}<tr><td colspan="8" class="empty">No dated documents.</td></tr>{% endif %}
+</table>
+</div>
+
+{% if data.undated %}
+<h2>No date found ({{ data.undated | length }})</h2>
+<p class="sub">Listed separately rather than sorted to the top. An unknown date is not a date.</p>
+<div class="table-wrap">
+<table>
+  <tr><th>Date</th><th>ID</th><th>What it is (verbatim extract)</th><th>Matter</th>
+      <th>Folder</th><th>Flags</th><th>Status</th><th>Decide</th></tr>
+  {% for e in data.undated %}{{ row(e) }}{% endfor %}
+</table>
+</div>
+{% endif %}
+{% endblock %}

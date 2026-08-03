@@ -12,7 +12,10 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, audit, backup, checks, fleet, health, migrate_tree, packets, views, watcher
+from . import (
+    __version__, audit, backup, checks, fleet, health, migrate_tree, packets,
+    triage, views, watcher,
+)
 from .config import LITIGATION_FOLDERS, ensure_layout, load_config
 from .db import open_database
 from .ingest import ingest_path, scan_all
@@ -151,6 +154,53 @@ def cmd_check(args) -> int:
         return 0 if report.ok else 1
     finally:
         conn.close()
+
+
+def cmd_triage(args) -> int:
+    """Chronological list of every document, for deciding what is what."""
+    config = _config(args)
+    conn = open_database(config)
+    try:
+        if args.action == "list":
+            triage.backfill_extracts(conn)
+            report = triage.chronology(
+                conn, matter_id=args.matter_id, folder=args.folder,
+                status=args.status, include_duplicates=not args.hide_copies)
+            if args.csv:
+                out = triage.to_csv(report)
+                if args.out:
+                    Path(args.out).write_text(out, encoding="utf-8")
+                    print(f"Wrote {report['total']} row(s) to {args.out}")
+                else:
+                    print(out, end="")
+            elif args.json:
+                _print(report)
+            else:
+                print(triage.format_table(report))
+        elif args.action == "copies":
+            groups = triage.copy_locations(conn)
+            if args.json:
+                _print(groups)
+            elif not groups:
+                print("No redundant copies recorded. Every document exists in one place.")
+            else:
+                total = sum(len(g["copies"]) for g in groups)
+                print(f"{len(groups)} document(s) with {total} redundant copy location(s).\n")
+                for group in groups:
+                    print(f"{group['doc_uid']}  {group['date'] or '(no date)'}  "
+                          f"{(group['what_it_is'] or '')[:60]}")
+                    print(f"    canonical: {group['canonical_path']}")
+                    for copy in group["copies"]:
+                        print(f"    copy:      {copy['path']}  [{copy['disposition']}]")
+                    print()
+        elif args.action == "propose-archive":
+            _print(triage.propose_copy_archive(conn, reviewer=args.actor))
+        elif args.action == "set":
+            _print(triage.set_status(conn, args.document_id, args.status_value,
+                                     reviewer=args.actor, note=args.note))
+    finally:
+        conn.close()
+    return 0
 
 
 def cmd_backup(args) -> int:
@@ -292,6 +342,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.add_argument("--verbose", action="store_true")
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("triage", help="chronological document list: date, extract, flags")
+    p.add_argument("action", choices=["list", "copies", "propose-archive", "set"],
+                   nargs="?", default="list")
+    p.add_argument("--matter-id", type=int)
+    p.add_argument("--folder")
+    p.add_argument("--status", help="filter by triage status")
+    p.add_argument("--hide-copies", action="store_true",
+                   help="omit byte-identical copies from the list")
+    p.add_argument("--csv", action="store_true", help="emit CSV for a spreadsheet")
+    p.add_argument("--out", help="write CSV to this path")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--document-id", type=int, help="for `set`")
+    p.add_argument("--status-value", help="for `set`: "
+                   + ", ".join(triage.TRIAGE_STATUSES))
+    p.add_argument("--note")
+    p.set_defaults(func=cmd_triage)
 
     p = sub.add_parser("backup", help="backup, verify, and restore")
     p.add_argument("action", choices=["create", "list", "verify", "restore", "prune"])
