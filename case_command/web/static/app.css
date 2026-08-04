@@ -509,3 +509,20 @@ tr.row-recalled td { background: rgba(217, 164, 65, .035); }
 .filters label.check { display: flex; flex-direction: row; align-items: center;
                        gap: .4rem; white-space: nowrap; }
 .filters label.check input { width: auto; margin: 0; }
+
+/* Checklist grouping. Every group states its full count in the summary, so
+   collapsing hides nothing — it only stops sixty-eight findings from becoming a
+   wall that gets skimmed. */
+.check-head { font-size: .7rem; text-transform: uppercase; letter-spacing: .09em;
+              color: var(--dim, #8a9ab2); margin: .8rem 0 .35rem; }
+.check-head.danger { color: #e0837e; }
+.check-group { border: 1px solid var(--line, #1e2a3d); border-radius: 8px;
+               margin-bottom: .4rem; }
+.check-group > summary { cursor: pointer; list-style: none; padding: .45rem .6rem;
+                         font-size: .78rem; }
+.check-group > summary::-webkit-details-marker { display: none; }
+.check-group > summary::after { content: " ▸"; color: var(--dim, #8a9ab2); }
+.check-group[open] > summary::after { content: " ▾"; }
+.check-group[open] > summary { border-bottom: 1px solid var(--line, #1e2a3d); }
+.check-group ul.tight { margin: 0; padding: .5rem .6rem .6rem 1.4rem; }
+.check-group ul.tight li { margin-bottom: .5rem; font-size: .8rem; }

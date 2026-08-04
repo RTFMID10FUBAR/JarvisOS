@@ -122,27 +122,44 @@
       {% endif %}
     </p>
 
+    {# Findings are grouped by which check raised them and collapsed behind a
+       count. Seventeen issues times five checks is sixty-eight findings, and a
+       flat list of sixty-eight is not a checklist — it is a wall, and a wall
+       gets skimmed. Every group states its full count in the summary, so
+       nothing is hidden: the reader chooses what to open, and the page never
+       implies there is less here than there is. Blocking groups start open. #}
     {% if data.checklist.blockers %}
-    <h3 class="sub" style="text-transform:uppercase;letter-spacing:.08em;color:var(--danger)">Blocking</h3>
-    <ul class="tight">
-      {% for f in data.checklist.blockers %}
-      <li><span class="chip danger">{{ f.check }}</span> <strong>{{ f.title }}</strong>
-        <div class="sub">{{ f.detail }}</div>
-        {% if f.remedy %}<div class="sub">Remedy: {{ f.remedy }}</div>{% endif %}</li>
-      {% endfor %}
-    </ul>
+    <h3 class="check-head danger">Blocking — {{ data.checklist.blockers | length }}</h3>
+    {% for check, findings in data.checklist.blockers | groupby('check') %}
+      <details class="check-group" open>
+        <summary><span class="chip danger">{{ check }}</span>
+          {{ findings | length }} blocking finding{{ '' if findings|length == 1 else 's' }}</summary>
+        <ul class="tight">
+          {% for f in findings %}
+          <li><strong>{{ f.title }}</strong>
+            <div class="sub">{{ f.detail }}</div>
+            {% if f.remedy %}<div class="sub">Remedy: {{ f.remedy }}</div>{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endfor %}
     {% endif %}
 
     {% if data.checklist.advisory %}
-    <h3 class="sub" style="text-transform:uppercase;letter-spacing:.08em;color:var(--muted)">Advisory</h3>
-    <ul class="tight">
-      {% for f in data.checklist.advisory %}
-      <li><span class="chip {{ 'warn' if f.severity == 'WARNING' else 'info' }}">{{ f.check }}</span>
-        <strong>{{ f.title }}</strong>
-        <div class="sub">{{ f.detail }}</div>
-        {% if f.remedy %}<div class="sub">Remedy: {{ f.remedy }}</div>{% endif %}</li>
-      {% endfor %}
-    </ul>
+    <h3 class="check-head">Advisory — {{ data.checklist.advisory | length }}</h3>
+    {% for check, findings in data.checklist.advisory | groupby('check') %}
+      <details class="check-group">
+        <summary><span class="chip {{ 'warn' if findings[0].severity == 'WARNING' else 'info' }}">{{ check }}</span>
+          {{ findings | length }} advisory finding{{ '' if findings|length == 1 else 's' }}</summary>
+        <ul class="tight">
+          {% for f in findings %}
+          <li><strong>{{ f.title }}</strong>
+            <div class="sub">{{ f.detail }}</div>
+            {% if f.remedy %}<div class="sub">Remedy: {{ f.remedy }}</div>{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endfor %}
     {% endif %}
 
     {% if not data.checklist.blockers and not data.checklist.advisory %}

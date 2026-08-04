@@ -1969,5 +1969,140 @@ class TestChronology(CaseCommandTest):
             self.assertNotIn(word, blob, f"proof summary characterised the case: {word!r}")
 
 
+# ===========================================================================
+# Filing Studio
+# ===========================================================================
+class TestFilingStudio(CaseCommandTest):
+    """Filing Studio prepares a filing against the record. It never files,
+    serves, or sends anything, and never predicts how a filing will be
+    received."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.ingest_all()
+        self.case2 = self.matter("psc-26-0315")
+
+    def test_a_confirmed_filing_without_proof_is_flagged(self):
+        # The proof CHECK constraint (migrations/0001_initial.sql) refuses an
+        # ordinary insert of a confirmed status with no proof. Disabling it
+        # for one write reproduces exactly the "record predates the
+        # constraint" case checks.source_check already anticipates, so the
+        # flag can be proven without weakening the constraint itself.
+        self.conn.execute("PRAGMA ignore_check_constraints=1")
+        filing_id = insert(self.conn, "filings", {
+            "matter_id": self.case2["id"],
+            "title": "Motion to Compel (legacy import)",
+            "filing_type": "MOTION",
+            "filing_status": "DOCKETED",
+            "created_by": "legacy-import",
+        })
+        self.conn.execute("PRAGMA ignore_check_constraints=0")
+        self.conn.commit()
+
+        data = filing.build_filing_studio(self.conn, self.case2["id"])
+        tracker = {row["id"]: row for row in data["status_tracker"]}
+        self.assertIn(filing_id, tracker)
+        row = tracker[filing_id]
+        self.assertTrue(row["unproven_confirmation"],
+                        "a confirmed status with no proof must be flagged")
+        self.assertFalse(row["has_proof"])
+        self.assertEqual(data["unproven_count"], 1)
+
+    def test_a_confirmed_filing_with_real_proof_is_not_flagged(self):
+        doc = self.conn.execute(
+            "SELECT id FROM documents WHERE matter_id=? LIMIT 1",
+            (self.case2["id"],)).fetchone()
+        filing_id = insert(self.conn, "filings", {
+            "matter_id": self.case2["id"],
+            "document_id": doc["id"] if doc else None,
+            "title": "Formal Complaint", "filing_type": "COMPLAINT",
+            "filing_status": "FILED_CONFIRMED", "proof_type": "ELECTRONIC_RECEIPT",
+            "proof_reference": "PSC-2026-0000418", "created_by": "test",
+        })
+        data = filing.build_filing_studio(self.conn, self.case2["id"])
+        tracker = {row["id"]: row for row in data["status_tracker"]}
+        self.assertFalse(tracker[filing_id]["unproven_confirmation"])
+        self.assertEqual(data["unproven_count"], 0)
+
+    def test_the_screen_exposes_no_transmit_action(self):
+        """No function in this module files, serves, or sends anything, and
+        the template exposes no button or form that could."""
+        import inspect
+        import re
+
+        source = inspect.getsource(filing)
+        for token in ("smtplib", "requests.post", "urlopen", "socket."):
+            self.assertNotIn(token, source)
+
+        template_path = (Path(__file__).resolve().parents[1]
+                         / "web" / "templates" / "filing.html")
+        html = template_path.read_text(encoding="utf-8")
+        self.assertNotIn("<script", html.lower())
+
+        # The only form on the page is the GET matter filter — nothing posts.
+        forms = re.findall(r"<form[^>]*>", html)
+        self.assertEqual(len(forms), 1)
+        self.assertIn('method="get"', forms[0])
+
+        # The only button on the page is that filter's — never an action that
+        # files, sends, or serves. (The inspector text below is free to
+        # *discuss* why there is no such button; that is not a button.)
+        buttons = re.findall(r"<button[^>]*>(.*?)</button>", html, re.S)
+        self.assertEqual([b.strip().lower() for b in buttons], ["show"])
+
+    def test_path_matrix_contains_no_prediction_or_percentage_language(self):
+        data = filing.build_filing_studio(self.conn, self.case2["id"])
+        blob = json.dumps(data["path_matrix"]).lower()
+        for banned in ("score", "confidence", "likelihood", "probability",
+                      "likely", "success", "percent", "%", "grant", "odds",
+                      "health rating"):
+            self.assertNotIn(banned, blob, f"path matrix leaked {banned!r}")
+
+    def test_staged_packet_reads_the_real_draft_filing_and_its_role(self):
+        draft_doc = self.conn.execute(
+            "SELECT id, doc_uid FROM documents WHERE original_filename LIKE 'DRAFT_Motion%'"
+        ).fetchone()
+        insert(self.conn, "filings", {
+            "matter_id": self.case2["id"], "document_id": draft_doc["id"],
+            "title": "Motion for Expedited Relief", "filing_type": "MOTION",
+            "filing_status": "DRAFT", "created_by": "test",
+        })
+        data = filing.build_filing_studio(self.conn, self.case2["id"])
+        self.assertEqual(len(data["staged_packet"]), 1)
+        self.assertEqual(data["staged_packet"][0]["filing_type"], "MOTION")
+        self.assertEqual(data["staged_packet"][0]["doc_uid"], draft_doc["doc_uid"])
+
+    def test_staged_packet_is_an_honest_empty_state_with_no_drafts(self):
+        data = filing.build_filing_studio(self.conn, self.case2["id"])
+        self.assertEqual(data["staged_packet"], [])
+
+    def test_smart_checklist_runs_the_real_checks_not_invented_ones(self):
+        data = filing.build_filing_studio(self.conn, self.case2["id"])
+        checklist = data["checklist"]
+        self.assertIn("blockers", checklist)
+        self.assertIn("advisory", checklist)
+        checks_seen = {f["check"] for f in checklist["blockers"] + checklist["advisory"]}
+        self.assertTrue(checks_seen, "no findings at all is suspicious for this fixture")
+        self.assertTrue(checks_seen.issubset(
+            {"completeness", "conflict", "defense", "preservation", "source"}))
+
+    def test_draft_queue_excludes_confirmed_and_rejected_filings(self):
+        doc = self.conn.execute(
+            "SELECT id FROM documents WHERE matter_id=? LIMIT 1",
+            (self.case2["id"],)).fetchone()
+        insert(self.conn, "filings", {
+            "matter_id": self.case2["id"], "document_id": doc["id"] if doc else None,
+            "title": "Draft motion", "filing_status": "DRAFT", "created_by": "test",
+        })
+        insert(self.conn, "filings", {
+            "matter_id": self.case2["id"], "document_id": doc["id"] if doc else None,
+            "title": "Rejected filing", "filing_status": "REJECTED", "created_by": "test",
+        })
+        data = filing.build_filing_studio(self.conn, self.case2["id"])
+        titles = {f["title"] for f in data["draft_queue"]}
+        self.assertIn("Draft motion", titles)
+        self.assertNotIn("Rejected filing", titles)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
