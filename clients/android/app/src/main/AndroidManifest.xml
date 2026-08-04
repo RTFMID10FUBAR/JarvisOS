@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The only permission this app needs. It talks to one machine on the
+         local network — the one holding the record. No cloud, no account, no
+         analytics, no third party ever holds the case. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="Case Command"
+        android:icon="@mipmap/ic_launcher"
+        android:supportsRtl="true"
+        android:allowBackup="false"
+        android:theme="@style/Theme.CaseCommand">
+
+        <!-- Cleartext to a private address only. The server binds to localhost
+             or a LAN address and is reached over the local network; there is no
+             public endpoint to secure and no certificate to obtain for one. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:usesCleartextTraffic="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

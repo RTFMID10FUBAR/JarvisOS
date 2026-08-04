@@ -1,0 +1,5 @@
+
+# Android client build output (core is compiled on demand by tools/build-core.sh)
+clients/android/build/
+clients/android/*/build/
+clients/android/.gradle/
