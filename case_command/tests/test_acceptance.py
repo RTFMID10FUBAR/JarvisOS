@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 from .. import (
-    access, audit, backup, checks, fleet, health, migrate_tree, offline,
+    access, api, audit, backup, checks, fleet, health, migrate_tree, offline,
     packets, preservation, triage, views, watcher,
 )
 from ..classify import classify_text
@@ -1318,6 +1318,150 @@ class TestOffline(CaseCommandTest):
         result = ingest_path(self.config, self.conn, self.paths["psc_complaint"])
         with self.assertRaises(ValueError):
             offline.pin(self.conn, result.document_id, reason="WHENEVER")
+
+
+# ===========================================================================
+# Versioned API — what a standalone native client talks to
+# ===========================================================================
+class TestApi(CaseCommandTest):
+
+    def _pair(self, label: str = "Phone", platform: str = "ios") -> str:
+        code = api.create_pairing_code(self.conn)["code"]
+        return api.redeem_pairing_code(self.conn, code=code, label=label,
+                                       platform=platform)["token"]
+
+    def test_pairing_returns_a_token_stored_only_as_a_hash(self):
+        """A copied database must yield no working credential."""
+        token = self._pair()
+        row = self.conn.execute("SELECT * FROM devices").fetchone()
+        self.assertNotEqual(row["token_hash"], token)
+        self.assertEqual(len(row["token_hash"]), 64)      # sha256 hex
+        self.assertEqual(row["token_prefix"], token[:8])
+        # The raw token appears nowhere in the row.
+        self.assertNotIn(token, json.dumps({k: row[k] for k in row.keys()}, default=str))
+
+    def test_a_pairing_code_works_once(self):
+        code = api.create_pairing_code(self.conn)["code"]
+        api.redeem_pairing_code(self.conn, code=code, label="First")
+        with self.assertRaises(api.ApiError) as ctx:
+            api.redeem_pairing_code(self.conn, code=code, label="Second")
+        self.assertEqual(ctx.exception.status, 409)
+
+    def test_an_expired_code_is_refused(self):
+        code = api.create_pairing_code(self.conn)["code"]
+        self.conn.execute("UPDATE pairing_codes SET expires_at='2000-01-01T00:00:00.000Z'")
+        with self.assertRaises(api.ApiError) as ctx:
+            api.redeem_pairing_code(self.conn, code=code, label="Late")
+        self.assertEqual(ctx.exception.status, 410)
+
+    def test_unknown_and_missing_tokens_are_refused(self):
+        for header in (None, "", "Bearer nonsense", "Basic abc"):
+            with self.assertRaises(api.ApiError) as ctx:
+                api.authenticate(self.conn, header)
+            self.assertIn(ctx.exception.status, (401, 403))
+
+    def test_a_revoked_device_is_cut_off(self):
+        token = self._pair()
+        device_uid = self.conn.execute("SELECT device_uid FROM devices").fetchone()["device_uid"]
+        api.authenticate(self.conn, f"Bearer {token}")     # works before
+
+        api.revoke_device(self.conn, device_uid, reason="left at the courthouse")
+        with self.assertRaises(api.ApiError) as ctx:
+            api.authenticate(self.conn, f"Bearer {token}")
+        self.assertEqual(ctx.exception.status, 403)
+
+    def test_a_device_cannot_be_deleted_only_revoked(self):
+        self._pair()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute("DELETE FROM devices")
+
+    def test_first_sync_returns_everything_then_nothing(self):
+        self.ingest_all()
+        first = api.sync(self.conn)
+        self.assertTrue(first["full_sync"])
+        self.assertGreater(first["total"], 0)
+        self.assertIn("matters", first["changed"])
+        self.assertIn("issues", first["changed"])
+
+        second = api.sync(self.conn, since=first["next_cursor"])
+        self.assertFalse(second["full_sync"])
+        self.assertEqual(second["total"], 0)
+
+    def test_delta_sync_returns_only_what_changed(self):
+        self.ingest_all()
+        cursor = api.sync(self.conn)["next_cursor"]
+
+        issue = self.conn.execute("SELECT id FROM issues LIMIT 1").fetchone()
+        from ..db import update
+
+        update(self.conn, "issues", issue["id"], {"risk_rating": "HIGH"})
+
+        delta = api.sync(self.conn, since=cursor)
+        self.assertEqual(delta["total"], 1)
+        self.assertEqual(list(delta["changed"].keys()), ["issues"])
+        self.assertEqual(delta["changed"]["issues"][0]["risk_rating"], "HIGH")
+
+    def test_sync_says_when_more_is_waiting(self):
+        """A client must never believe it is up to date when it is not."""
+        self.ingest_all()
+        capped = api.sync(self.conn, limit_per_table=2)
+        self.assertTrue(capped["more_available"])
+        self.assertTrue(capped["truncated_tables"])
+
+    def test_document_detail_carries_provenance_and_copies(self):
+        result = ingest_path(self.config, self.conn, self.paths["psc_complaint"])
+        ingest_path(self.config, self.conn, self.paths["duplicate"])
+
+        detail = api.document_detail(self.conn, result.doc_uid)
+        self.assertEqual(detail["doc_uid"], result.doc_uid)
+        self.assertEqual(detail["date_source"], "signature block")
+        self.assertGreater(len(detail["text"]), 100)
+        self.assertTrue(detail["has_original"])
+        # The other physical location travels with it.
+        self.assertEqual(len(detail["copies"]), 1)
+
+    def test_document_original_is_served_unmodified(self):
+        result = ingest_path(self.config, self.conn, self.paths["psc_complaint"])
+        before = self.paths["psc_complaint"].read_bytes()
+        body, filename, _content_type = api.document_original(self.conn, result.doc_uid)
+
+        self.assertEqual(body, before)
+        self.assertEqual(filename, self.paths["psc_complaint"].name)
+        # Serving it changed nothing on disk.
+        self.assertEqual(self.paths["psc_complaint"].read_bytes(), before)
+
+    def test_unknown_document_is_a_404_not_a_crash(self):
+        with self.assertRaises(api.ApiError) as ctx:
+            api.document_detail(self.conn, "CC-DOC-999999")
+        self.assertEqual(ctx.exception.status, 404)
+
+    def test_matter_detail_includes_atlas_and_coverage(self):
+        self.ingest_all()
+        case2 = self.matter("psc-26-0315")
+        detail = api.matter_detail(self.conn, case2["id"])
+        self.assertIn("atlas", detail)
+        self.assertIn("coverage", detail)
+        self.assertIn("available", detail["atlas"])
+        # Coverage is counts, never a score. No field may carry a percentage or
+        # a health number — the note is allowed to say the word "score" because
+        # it exists to say the opposite.
+        self.assertIn("issues_total", detail["coverage"])
+        for key in detail["coverage"]:
+            lowered = key.lower()
+            for banned in ("score", "percent", "pct", "health", "rating", "grade"):
+                self.assertNotIn(banned, lowered, f"coverage field {key!r} looks like a score")
+        for key, value in detail["coverage"].items():
+            if isinstance(value, str):
+                continue
+            self.assertIsInstance(value, int, f"coverage field {key!r} is not a plain count")
+
+    def test_index_is_open_and_documents_the_guarantees(self):
+        index = api.index()
+        self.assertEqual(index["api_version"], "v1")
+        self.assertGreaterEqual(len(index["endpoints"]), 8)
+        joined = " ".join(index["guarantees"]).lower()
+        self.assertIn("read-only", joined)
+        self.assertIn("transmits", joined)
 
 
 if __name__ == "__main__":

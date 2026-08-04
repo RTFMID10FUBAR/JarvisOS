@@ -13,8 +13,8 @@ import sys
 from pathlib import Path
 
 from . import (
-    __version__, access, audit, backup, checks, fleet, health, migrate_tree,
-    offline, packets, triage, views, watcher,
+    __version__, access, api, audit, backup, checks, fleet, health,
+    migrate_tree, offline, packets, triage, views, watcher,
 )
 from .config import LITIGATION_FOLDERS, ensure_layout, load_config
 from .db import open_database
@@ -298,6 +298,45 @@ def cmd_offline(args) -> int:
     return 0
 
 
+def cmd_device(args) -> int:
+    """Pair and manage the phones allowed to reach the API."""
+    config = _config(args)
+    conn = open_database(config)
+    try:
+        if args.action == "pair":
+            result = api.create_pairing_code(conn, actor=args.actor)
+            print(f"\n    Pairing code:  {result['code']}\n")
+            print(f"Type it into the phone within {result['ttl_minutes']} minutes.")
+            print("It works once. The token the phone receives is shown to it only")
+            print("once and is stored here as a hash, so a copied database yields")
+            print("no working credential.")
+        elif args.action == "list":
+            devices = api.list_devices(conn)
+            if args.json:
+                _print(devices)
+            elif not devices:
+                print("No devices paired. Run: case-command device pair")
+            else:
+                for d in devices:
+                    state = "REVOKED" if d["revoked"] else "active"
+                    print(f"{d['device_uid'][:12]}  {d['label'][:22]:<22} "
+                          f"{(d['platform'] or '?'):<8} {state:<8} "
+                          f"synced {d['sync_count']}x  "
+                          f"last seen {(d['last_seen_at'] or 'never')[:16]}")
+        elif args.action == "revoke":
+            if not args.device_uid:
+                print("--device-uid is required", file=sys.stderr)
+                return 1
+            _print(api.revoke_device(conn, args.device_uid, reason=args.reason,
+                                     actor=args.actor))
+    except api.ApiError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_backup(args) -> int:
     config = _config(args)
     conn = open_database(config, migrate_if_needed=False)
@@ -494,6 +533,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--priority", type=int, default=100)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_offline)
+
+    p = sub.add_parser("device", help="pair and manage phones allowed to sync")
+    p.add_argument("action", choices=["pair", "list", "revoke"], nargs="?", default="list")
+    p.add_argument("--device-uid")
+    p.add_argument("--reason")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_device)
 
     p = sub.add_parser("backup", help="backup, verify, and restore")
     p.add_argument("action", choices=["create", "list", "verify", "restore", "prune"])

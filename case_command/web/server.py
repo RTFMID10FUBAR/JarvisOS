@@ -16,7 +16,8 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from .. import (
-    __version__, access, atlas, audit, fleet, health, offline, triage, views,
+    __version__, access, api, atlas, audit, fleet, health, offline, triage,
+    views,
 )
 from ..config import Config, LITIGATION_FOLDERS, load_config
 from ..db import open_database, utcnow
@@ -124,6 +125,9 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/static/"):
             return self._serve_static(parsed.path)
 
+        if parsed.path.startswith("/api/v1"):
+            return self._api_get(parsed.path, params)
+
         routes: dict[str, Callable[[dict[str, list[str]]], None]] = {
             "/": self.view_dashboard,
             "/m": self.m_home,
@@ -165,6 +169,12 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         content_type = self.headers.get("Content-Type") or ""
+
+        # The API reads its own body — JSON for most endpoints, multipart for
+        # uploads. This check must come before the form parse below, or the body
+        # is consumed here and arrives empty there.
+        if parsed.path.startswith("/api/v1"):
+            return self._api_post(parsed.path)
 
         # Multipart bodies are binary and are read by the handler itself.
         if content_type.startswith("multipart/form-data"):
@@ -280,6 +290,107 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
             self._send(f"<h1>400</h1><p>{exc}</p>".encode("utf-8"), 400)
         finally:
             conn.close()
+
+    # -- versioned API ------------------------------------------------------
+    def _api_get(self, path: str, params: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            rest = path[len("/api/v1"):].strip("/")
+            parts = rest.split("/") if rest else []
+
+            # Open endpoints: a client needs these before it has a token.
+            if not parts:
+                return self._json(api.index())
+            if parts == ["health"]:
+                report = health.run_health_checks(self.config, conn)
+                return self._json(report, 200 if report["overall"] != "FAIL" else 503)
+
+            device = api.authenticate(conn, self.headers.get("Authorization"))
+
+            if parts == ["sync"]:
+                return self._json(api.sync(conn, since=self._str(params, "since"),
+                                           device=device))
+            if parts == ["matters"]:
+                return self._json({"matters": views.list_matters(conn)})
+            if len(parts) == 2 and parts[0] == "matters":
+                return self._json(api.matter_detail(conn, int(parts[1])))
+            if len(parts) == 2 and parts[0] == "documents":
+                return self._json(api.document_detail(conn, parts[1]))
+            if len(parts) == 3 and parts[0] == "documents" and parts[2] == "original":
+                body, filename, content_type = api.document_original(conn, parts[1])
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="{filename}"')
+                self.end_headers()
+                return self.wfile.write(body)
+            if len(parts) == 2 and parts[0] == "hearing":
+                return self._json(views.hearing_mode(conn, int(parts[1])))
+            if parts == ["offline", "bundle"]:
+                bundle = offline.build_bundle(conn, self._int(params, "matter_id"))
+                offline.mark_synced(conn, [d["id"] for d in bundle["documents"]])
+                return self._json(bundle)
+            if parts == ["devices"]:
+                return self._json({"devices": api.list_devices(conn)})
+
+            self._json({"error": f"no such endpoint: {path}"}, 404)
+        except api.ApiError as exc:
+            self._json({"error": str(exc)}, exc.status)
+        except ValueError as exc:
+            self._json({"error": str(exc)}, 400)
+        finally:
+            conn.close()
+
+    def _api_post(self, path: str) -> None:
+        conn = self._conn()
+        try:
+            rest = path[len("/api/v1"):].strip("/")
+
+            if rest == "pair":
+                payload = self._read_json()
+                return self._json(api.redeem_pairing_code(
+                    conn,
+                    code=payload.get("code", ""),
+                    label=payload.get("label", "Phone"),
+                    platform=payload.get("platform", "unknown"),
+                    app_version=payload.get("app_version"),
+                ))
+
+            device = api.authenticate(conn, self.headers.get("Authorization"))
+
+            if rest == "captures":
+                return self.post_capture()
+            if rest == "pins":
+                payload = self._read_json()
+                return self._json(offline.pin(
+                    conn, int(payload["document_id"]),
+                    reason=payload.get("reason", "MANUAL"),
+                    include_original=bool(payload.get("include_original")),
+                    actor=device["label"]))
+            if rest == "pins/pack":
+                payload = self._read_json()
+                return self._json(offline.build_hearing_pack(
+                    conn, int(payload["matter_id"]),
+                    include_originals=bool(payload.get("include_originals")),
+                    actor=device["label"]))
+
+            self._json({"error": f"no such endpoint: {path}"}, 404)
+        except api.ApiError as exc:
+            self._json({"error": str(exc)}, exc.status)
+        except (ValueError, KeyError) as exc:
+            self._json({"error": str(exc)}, 400)
+        finally:
+            conn.close()
+
+    def _read_json(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length") or 0)
+        if not length:
+            return {}
+        try:
+            return json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise api.ApiError(f"invalid JSON body: {exc}", 400)
 
     # -- phone (PWA) --------------------------------------------------------
     def _m_render(self, template: str, **context: Any) -> None:
