@@ -8,6 +8,12 @@ getting it subtly wrong fails in a way that looks like a test failure.
 import sys
 from pathlib import Path
 
+# Run as `python3 clients/android/tools/ci-fixture.py`, sys.path[0] is this
+# script's own directory, not the repository root — so `case_command` is not
+# importable. Put the repo root first rather than relying on the caller to set
+# PYTHONPATH, so the script works the same however it is invoked.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
 from case_command.config import ensure_layout, load_config
 from case_command.db import open_database
 from case_command.ingest import scan_all

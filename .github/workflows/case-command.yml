@@ -20,6 +20,13 @@ on:
       - ".github/workflows/case-command.yml"
   workflow_dispatch:
 
+# A push to a branch that has an open PR fires both triggers, which ran the
+# whole thing twice — including two APK builds. Grouping by ref and cancelling
+# the older run keeps one.
+concurrency:
+  group: case-command-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python:
     name: Python — 157 acceptance tests
