@@ -123,10 +123,14 @@ fun main(args: Array<String>) {
         // To test the rule end to end the harness runs the desktop command,
         // with {uid} replaced by the paired device. Without it the rule is
         // reported as not run rather than quietly passing.
-        val revoke: ((String) -> Unit)? = args.getOrNull(2)?.let { template ->
+        // Everything after the pairing code is the revoke command. Joined
+        // rather than taken as args[2], because Gradle's --args splits on
+        // whitespace and would otherwise hand over only the word "python3".
+        val template = if (args.size > 2) args.drop(2).joinToString(" ") else null
+        val revoke: ((String) -> Unit)? = template?.let { command ->
             { uid: String ->
-                val command = template.replace("{uid}", uid).split(" ").filter { it.isNotEmpty() }
-                val exit = ProcessBuilder(command).redirectErrorStream(true)
+                val argv = command.replace("{uid}", uid).split(" ").filter { it.isNotEmpty() }
+                val exit = ProcessBuilder(argv).redirectErrorStream(true)
                     .start().let { process ->
                         process.inputStream.readBytes()
                         process.waitFor()

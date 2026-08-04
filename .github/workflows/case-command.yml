@@ -1,0 +1,123 @@
+name: Case Command
+
+# Runs the checks that can be run anywhere, plus the one that cannot be run in
+# the development container: building the Android APK. `dl.google.com` is
+# blocked by that environment's network policy, so there is no Android SDK and
+# no Google Maven there. A GitHub runner has both, which makes this the first
+# place an APK actually exists rather than being asserted.
+
+on:
+  push:
+    branches: ["claude/case-command-**"]
+    paths:
+      - "case_command/**"
+      - "clients/android/**"
+      - ".github/workflows/case-command.yml"
+  pull_request:
+    paths:
+      - "case_command/**"
+      - "clients/android/**"
+      - ".github/workflows/case-command.yml"
+  workflow_dispatch:
+
+jobs:
+  python:
+    name: Python — 157 acceptance tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The core is stdlib only. Jinja2 is needed for the web UI tests, and
+      # nothing else is installed on purpose — if this list ever grows, the
+      # "zero required third-party dependencies" claim has quietly stopped
+      # being true.
+      - run: pip install jinja2
+
+      - name: Acceptance tests
+        run: python3 -m unittest case_command.tests.test_acceptance -v
+
+  kotlin-core:
+    name: Kotlin core — self test + 12 conformance rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install jinja2
+
+      - name: Build a fixture record and start the server
+        run: |
+          set -eux
+          R="${RUNNER_TEMP}/case"
+          python3 clients/android/tools/ci-fixture.py "$R"
+          nohup python3 -m case_command --data-root "$R" serve --port 8787 \
+            > "${RUNNER_TEMP}/server.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null http://127.0.0.1:8787/api/v1/; then break; fi
+            sleep 1
+          done
+          curl -sf -o /dev/null -w 'server %{http_code}\n' http://127.0.0.1:8787/api/v1/
+
+      - name: Self test and the twelve conformance rules
+        working-directory: clients/android
+        run: |
+          set -eux
+          R="${RUNNER_TEMP}/case"
+          CODE=$(cd "${GITHUB_WORKSPACE}" && python3 -m case_command --data-root "$R" device pair \
+                 | grep -oE '\b[A-HJ-NP-Z2-9]{6}\b' | head -1)
+          # Revocation is driven by the desktop command because a device must
+          # not be able to revoke itself. Without it the rule reports "not run"
+          # rather than quietly passing.
+          ./gradlew :core:selfTest --no-daemon --args="http://127.0.0.1:8787 $CODE python3 -m case_command --data-root $R device revoke --device-uid {uid} --reason ci"
+
+      - name: Server log on failure
+        if: failure()
+        run: cat "${RUNNER_TEMP}/server.log" || true
+
+  apk:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Protocol first
+        working-directory: clients/android
+        run: ./gradlew :core:build --no-daemon
+
+      # This is the step that cannot happen in the development container. If it
+      # goes green there is a real APK attached to this run; if it goes red the
+      # errors are real errors, which is the point of running it at all rather
+      # than claiming the app builds.
+      - name: Assemble debug APK
+        working-directory: clients/android
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Report what was produced
+        working-directory: clients/android
+        run: |
+          find app/build/outputs -name '*.apk' -exec ls -lh {} \;
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: case-command-debug-apk
+          path: clients/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
