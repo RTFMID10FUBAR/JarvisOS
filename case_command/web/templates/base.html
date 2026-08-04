@@ -71,8 +71,24 @@
       <div class="who"><b>Jacob Kerr</b>Private workspace</div>
     </header>
 
-    <div class="content">
-      {% block content %}{% endblock %}
+    {# A route that defines `inspector` gets a pinned right-hand panel at wide
+       widths. Below 1440px it becomes a disclosure the reader opens, rather
+       than a column squeezing the workspace — an inspector that has crushed
+       the thing it is inspecting is worse than no inspector. #}
+    {% set inspector_html %}{% block inspector %}{% endblock %}{% endset %}
+    {% set has_inspector = inspector_html.strip() | length > 0 %}
+
+    <div class="content {{ 'with-inspector' if has_inspector }}">
+      <div class="workspace">
+        {% block content %}{% endblock %}
+      </div>
+
+      {% if has_inspector %}
+        <details class="inspector" open>
+          <summary>{% block inspector_title %}Context{% endblock %}</summary>
+          <div class="inspector-body">{{ inspector_html }}</div>
+        </details>
+      {% endif %}
     </div>
 
     <footer class="foot">

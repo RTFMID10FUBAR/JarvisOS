@@ -15,8 +15,8 @@ import unittest
 from pathlib import Path
 
 from .. import (
-    access, api, audit, backup, checks, client, fleet, health, migrate_tree,
-    offline, packets, preservation, triage, views, watcher,
+    access, api, atlas, audit, backup, checks, client, fleet, health,
+    migrate_tree, offline, packets, preservation, triage, views, watcher,
 )
 from ..classify import classify_text
 from ..config import (
@@ -1606,6 +1606,67 @@ class TestReferenceClient(CaseCommandTest):
     def test_the_mirror_covers_every_table_the_server_replicates(self):
         """A table the server sends and the client ignores is a silent gap."""
         self.assertEqual(set(client.MIRROR_TABLES), set(api.SYNC_TABLES))
+
+
+class TestAtlasGraph(CaseCommandTest):
+    """The Path Atlas map draws relationships; it must not invent them."""
+
+    def graph(self):
+        self.ingest_all()
+        return atlas.graph(self.conn, self.matter("psc-26-0315")["id"])
+
+    def test_every_edge_connects_two_real_nodes(self):
+        g = self.graph()
+        ids = {n["id"] for n in g["nodes"]}
+        self.assertTrue(g["edges"])
+        for edge in g["edges"]:
+            self.assertIn(edge["from"], ids)
+            self.assertIn(edge["to"], ids)
+
+    def test_a_blocked_path_is_drawn_with_the_thing_that_blocks_it(self):
+        """The point of the map: never a blocked node with nothing attached."""
+        g = self.graph()
+        blocked = [n for n in g["nodes"] if n["state"] == "blocked"]
+        self.assertTrue(blocked, "fixture should produce at least one blocked path")
+        for node in blocked:
+            incoming = [e for e in g["edges"] if e["to"] == node["id"] and e["kind"] == "blocks"]
+            self.assertTrue(incoming, f"{node['label']!r} is blocked by nothing visible")
+
+    def test_no_node_carries_a_score_or_a_prediction(self):
+        g = self.graph()
+        banned = ("score", "confidence", "likelihood", "probability", "likely",
+                  "success", "percent", "odds")
+        blob = json.dumps(g["nodes"]).lower()
+        for word in banned:
+            self.assertNotIn(word, blob, f"the map leaked {word!r}")
+
+    def test_labels_are_wrapped_not_sliced(self):
+        """A label cut mid-word can drop the word that says what to supply."""
+        lines = atlas._wrap("17 issue(s) need a linked source document", 30, 2)
+        self.assertEqual(lines, ["17 issue(s) need a linked", "source document"])
+        for line in lines:
+            self.assertLessEqual(len(line), 30)
+        # Nothing was lost.
+        self.assertEqual(" ".join(lines), "17 issue(s) need a linked source document")
+
+    def test_genuine_overflow_is_marked(self):
+        text = "A very long label that will definitely not fit in two lines no matter what"
+        lines = atlas._wrap(text, 30, 2)
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[-1].endswith("\u2026"), "truncation was silent")
+
+    def test_cross_matter_links_are_reported_not_merged(self):
+        g = self.graph()
+        # Six matters, permanently separate. The map shows references between
+        # them; it must never present them as one matter.
+        self.assertTrue(g["links"])
+        slugs = {l["slug"] for l in g["links"]}
+        self.assertNotIn(g["matter"]["slug"], slugs)
+
+    def test_a_matter_with_nothing_to_evaluate_says_why(self):
+        g = atlas.graph(self.conn, self.matter("kanawha-rule-60")["id"])
+        if g["empty"]:
+            self.assertIn("record", g["empty_reason"].lower())
 
 
 if __name__ == "__main__":

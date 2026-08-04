@@ -332,3 +332,182 @@ def coverage(conn: sqlite3.Connection, matter_id: int | None = None) -> dict[str
         "note": ("A count, not a score. Every number here can be checked against the "
                  "record; a single health percentage could not be."),
     }
+
+
+# ---------------------------------------------------------------------------
+# graph layout
+#
+# The Path Atlas was four columns of prose. Prose is the wrong shape for this
+# question: "what can I do, what is stopping it, and what does it protect" is a
+# question about *relationships*, and a reader should be able to see a blocked
+# path and its missing prerequisite in one glance rather than by matching text
+# across two cards.
+#
+# Layout is computed here rather than in the browser for two reasons. The map
+# renders identically in a screenshot, a print, and a hearing-mode display with
+# no scripting; and a deterministic layout means the same record always draws
+# the same picture, which matters when the picture is going to be looked at
+# repeatedly under time pressure.
+#
+# Nothing here scores or predicts. A node is available or it names what blocks
+# it. There is no risk dial and no likelihood.
+# ---------------------------------------------------------------------------
+NODE_W = 232
+NODE_H = 74
+COL_GAP = 92
+ROW_GAP = 20
+MARGIN = 28
+
+#: Column order, left to right. Prerequisites sit before the path they gate
+#: because that is the reading order of the question: what is missing, what does
+#: it block, what would that have protected.
+COLUMNS = ("matter", "blocker", "path", "preserves")
+
+
+def _column_x(index: int) -> int:
+    return MARGIN + index * (NODE_W + COL_GAP)
+
+
+def graph(conn: sqlite3.Connection, matter_id: int) -> dict[str, Any]:
+    """Path Atlas as a directed graph with fixed coordinates.
+
+    Returns nodes carrying x/y/width/height and edges carrying a cubic bezier
+    path string, so a template can draw an SVG without computing anything.
+    """
+    atlas = build_atlas(conn, matter_id)
+    if not atlas:
+        return {}
+
+    matter = atlas["matter"]
+    paths = atlas["blocked"] + atlas["suggested_order"]
+    # Blocked first, then available by deadline pressure. Reading top to bottom
+    # is then "what is stuck" followed by "what is ready", which is the order a
+    # person actually needs.
+
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+
+    def add_node(col: str, key: str, **kw: Any) -> dict[str, Any]:
+        node = {"id": f"{col}:{key}", "column": col,
+                "x": _column_x(COLUMNS.index(col)), "w": NODE_W, "h": NODE_H, **kw}
+        nodes.append(node)
+        return node
+
+    def stack(column: str) -> list[dict[str, Any]]:
+        return [n for n in nodes if n["column"] == column]
+
+    def place(node: dict[str, Any], y: int) -> None:
+        node["y"] = y
+
+    # -- paths, evenly stacked ---------------------------------------------
+    path_nodes: list[dict[str, Any]] = []
+    y = MARGIN
+    for p in paths:
+        node = add_node("path", p["key"], label=p["label"], what=p["what_it_does"],
+                        state="blocked" if p["blockers"] else "open",
+                        days_left=p["days_left"], urgency_date=p["urgency_date"],
+                        urgency_reason=p["urgency_reason"],
+                        authority=p["authority_to_confirm"])
+        place(node, y)
+        path_nodes.append(node)
+        y += NODE_H + ROW_GAP
+
+    # -- blockers, aligned to the path they gate ---------------------------
+    for p, node in zip(paths, path_nodes):
+        for i, blocker in enumerate(p["blockers"]):
+            b = add_node("blocker", f"{p['key']}-{i}", label=blocker, state="missing")
+            place(b, node["y"] + i * (NODE_H + ROW_GAP) // max(1, len(p["blockers"])))
+            edges.append(_edge(b, node, "blocks"))
+
+    # -- what a path preserves ---------------------------------------------
+    for p, node in zip(paths, path_nodes):
+        if p["preserves"]:
+            pr = add_node("preserves", p["key"], label=p["preserves"], state="preserves")
+            place(pr, node["y"])
+            edges.append(_edge(node, pr, "preserves"))
+
+    # -- the matter itself, centred against the path stack ------------------
+    height = max([n["y"] + n["h"] for n in nodes], default=MARGIN + NODE_H)
+    # The forum name is often longer than the node. Truncate it here rather
+    # than letting SVG text run past its own box.
+    forum = matter.get("forum") or ""
+    root = add_node("matter", matter["slug"], label=matter["title"],
+                    caption=matter.get("case_number") or "", state="matter",
+                    forum=forum if len(forum) <= 34 else forum[:33].rstrip() + "…")
+    place(root, max(MARGIN, (height - NODE_H) // 2))
+    for node in path_nodes:
+        edges.append(_edge(root, node, "considers"))
+
+    # -- cross-matter references -------------------------------------------
+    # Six matters are kept permanently separate. Drawing that is the point:
+    # a link is a reference, never a merge, and the picture should not let
+    # anyone forget which.
+    links = _rows(conn, """
+        SELECT l.relationship, l.notes, m.slug, m.title, m.case_number
+        FROM matter_links l JOIN matters m ON m.id = l.related_matter_id
+        WHERE l.matter_id = ? ORDER BY l.relationship, m.slug
+    """, (matter_id,))
+
+    # Wrap once, here, so the template only draws.
+    for node in nodes:
+        node["lines"] = _wrap(str(node.get("label") or ""), 30,
+                              1 if node["column"] == "matter" else 2)
+
+    width = _column_x(len(COLUMNS) - 1) + NODE_W + MARGIN
+    return {
+        "matter": matter,
+        "nodes": nodes,
+        "edges": edges,
+        "links": links,
+        "width": width,
+        "height": max(height, root["y"] + NODE_H) + MARGIN,
+        "counts": atlas["counts"],
+        "disclaimer": atlas["disclaimer"],
+        "empty": not path_nodes,
+        "empty_reason": (
+            "No procedural path can be evaluated for this matter yet. That is a "
+            "statement about the record, not about the case: paths appear once "
+            "the record holds the orders, deadlines, and issues they depend on."
+        ),
+    }
+
+
+def _wrap(text: str, width: int, max_lines: int) -> list[str]:
+    """Word-aware wrap for SVG text, which cannot wrap itself.
+
+    Slicing a label at a fixed column splits words mid-character and, worse,
+    silently drops the tail. A blocker that reads "17 issue(s) need a linked
+    source d…" has lost the word that says what to supply. Wrapping on word
+    boundaries and marking a genuine overflow keeps the node honest about
+    whether anything was cut.
+    """
+    words, lines, current = text.split(), [], ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        current = word
+        if len(lines) == max_lines:
+            break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+
+    consumed = len(" ".join(lines))
+    if consumed < len(text.strip()):
+        lines[-1] = lines[-1][:width - 1].rstrip() + "…"
+    return lines
+
+
+def _edge(src: dict[str, Any], dst: dict[str, Any], kind: str) -> dict[str, Any]:
+    """A cubic bezier from the right edge of *src* to the left edge of *dst*."""
+    x1, y1 = src["x"] + src["w"], src["y"] + src["h"] // 2
+    x2, y2 = dst["x"], dst["y"] + dst["h"] // 2
+    mid = (x1 + x2) / 2
+    return {
+        "kind": kind,
+        "d": f"M {x1} {y1} C {mid} {y1}, {mid} {y2}, {x2} {y2}",
+        "from": src["id"], "to": dst["id"],
+    }

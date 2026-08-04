@@ -375,3 +375,101 @@ footer.foot {
   font-weight: 700;
 }
 .statbar .s .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------------------
+   Landscape workspace: workspace + pinned inspector.
+
+   The inspector is a <details>, not a div, so the collapse works with no
+   scripting. At >=1440px it is pinned open beside the workspace; below that it
+   becomes a disclosure above the content, because a 360px panel taking a third
+   of a 1200px screen crushes the thing it exists to explain.
+   --------------------------------------------------------------------------- */
+.content.with-inspector {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 1rem;
+  align-items: start;
+}
+.content .workspace { min-width: 0; }
+
+.inspector {
+  position: sticky;
+  top: 1rem;
+  background: var(--panel, #101725);
+  border: 1px solid var(--line, #1e2a3d);
+  border-radius: 10px;
+  max-height: calc(100vh - 6rem);
+  overflow: auto;
+}
+.inspector > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: .6rem .8rem;
+  font-size: .68rem;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--dim, #7d8ca5);
+  border-bottom: 1px solid var(--line, #1e2a3d);
+  position: sticky;
+  top: 0;
+  background: inherit;
+}
+.inspector > summary::-webkit-details-marker { display: none; }
+.inspector > summary::after { content: " ▾"; float: right; }
+.inspector:not([open]) > summary::after { content: " ▸"; }
+.inspector:not([open]) { max-height: none; }
+.inspector-body { padding: .8rem; display: grid; gap: .7rem; }
+
+.ins-card {
+  border: 1px solid var(--line, #1e2a3d);
+  border-left: 3px solid var(--accent, #3b82f6);
+  border-radius: 8px;
+  padding: .6rem .7rem;
+  background: rgba(255,255,255,.015);
+}
+.ins-card h4 { margin: 0 0 .3rem; font-size: .82rem; }
+.ins-card p  { margin: 0; font-size: .78rem; line-height: 1.45; color: var(--dim, #9fb0c8); }
+.ins-card.warn { border-left-color: #d9a441; }
+.ins-card.stop { border-left-color: #c9524d; }
+.ins-card.good { border-left-color: #4a9d6b; }
+
+@media (max-width: 1439px) {
+  .content.with-inspector { grid-template-columns: minmax(0, 1fr); }
+  .inspector { position: static; max-height: none; order: -1; }
+}
+
+/* ---------------------------------------------------------------------------
+   Path Atlas map.
+
+   Server-computed coordinates, plain SVG, no scripting — so it renders the same
+   in a screenshot, a print, and hearing mode on a machine with JS disabled.
+   --------------------------------------------------------------------------- */
+.map-wrap { overflow-x: auto; padding: .2rem 0 .4rem; }
+.map { display: block; min-width: 100%; }
+
+.map .edge { fill: none; stroke-width: 1.6; }
+.map .edge.considers { stroke: #35507a; stroke-dasharray: 3 4; }
+.map .edge.blocks    { stroke: #c9524d; }
+.map .edge.preserves { stroke: #4a9d6b; }
+
+.map .node rect { rx: 8; stroke-width: 1.2; }
+.map .node.matter    rect { fill: #16233a; stroke: #3b82f6; }
+.map .node.path.open rect { fill: #12261d; stroke: #4a9d6b; }
+.map .node.path.blocked rect { fill: #2a1719; stroke: #c9524d; }
+.map .node.blocker   rect { fill: #2a1f14; stroke: #d9a441; }
+.map .node.preserves rect { fill: #131f2e; stroke: #5c7fae; }
+
+.map .n-label { font: 600 12.5px system-ui, sans-serif; fill: #e6edf7; }
+.map .n-sub   { font: 400 10.5px system-ui, sans-serif; fill: #93a4bd; }
+.map .n-tag   { font: 600 9px system-ui, sans-serif; letter-spacing: .07em; }
+.map .n-tag.open     { fill: #6fc394; }
+.map .n-tag.blocked  { fill: #e0837e; }
+.map .n-tag.missing  { fill: #e8c273; }
+.map .n-tag.preserves{ fill: #8fb2dc; }
+.map .col-head { font: 600 9.5px system-ui, sans-serif; letter-spacing: .12em; fill: #62748f; }
+
+.map-key { display: flex; flex-wrap: wrap; gap: .9rem; padding: .5rem .2rem 0; font-size: .72rem; color: var(--dim, #8a9ab2); }
+.map-key i { display: inline-block; width: 22px; height: 0; border-top: 2px solid; margin-right: .35rem; vertical-align: middle; }
+.map-key .k-considers i { border-top-style: dashed; color: #35507a; }
+.map-key .k-blocks i    { color: #c9524d; }
+.map-key .k-preserves i { color: #4a9d6b; }

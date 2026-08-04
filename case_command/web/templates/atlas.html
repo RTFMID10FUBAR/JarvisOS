@@ -20,6 +20,78 @@
 
 <div class="banner warn">{{ data.disclaimer }}</div>
 
+<section class="panel">
+  <header><b>Path map</b>
+    <span class="spacer"></span>
+    <span class="chip ok">{{ data.counts.available }} open</span>
+    <span class="chip danger">{{ data.counts.blocked }} blocked</span>
+    <span class="chip">{{ data.counts.preserving }} preserving</span>
+  </header>
+
+  {% if graph and not graph.empty %}
+  <div class="map-wrap">
+    <svg class="map" viewBox="0 0 {{ graph.width }} {{ graph.height }}"
+         width="{{ graph.width }}" height="{{ graph.height }}"
+         role="img" aria-label="Procedural paths for {{ data.matter.title }}">
+      <title>Procedural paths, what blocks them, and what they preserve</title>
+
+      {% for e in graph.edges %}
+        <path class="edge {{ e.kind }}" d="{{ e.d }}"/>
+      {% endfor %}
+
+      {% for n in graph.nodes %}
+      <g class="node {{ n.column }} {{ n.state }}">
+        <rect x="{{ n.x }}" y="{{ n.y }}" width="{{ n.w }}" height="{{ n.h }}"/>
+        <text class="n-tag {{ n.state }}" x="{{ n.x + 12 }}" y="{{ n.y + 17 }}">
+          {%- if n.column == 'matter' %}MATTER
+          {%- elif n.column == 'blocker' %}MISSING FROM RECORD
+          {%- elif n.column == 'preserves' %}PRESERVES
+          {%- elif n.state == 'blocked' %}BLOCKED
+          {%- else %}OPEN{% endif -%}
+        </text>
+        {% for line in n.lines %}
+          <text class="n-label" x="{{ n.x + 12 }}" y="{{ n.y + 34 + loop.index0 * 15 }}">{{ line }}</text>
+        {% endfor %}
+        {% set below = n.y + 34 + (n.lines|length) * 15 %}
+        {% if n.column == 'matter' %}
+          <text class="n-sub" x="{{ n.x + 12 }}" y="{{ below }}">{{ n.caption or '—' }}</text>
+          <text class="n-sub" x="{{ n.x + 12 }}" y="{{ below + 14 }}">{{ n.forum }}</text>
+        {% elif n.column == 'path' and n.urgency_date %}
+          <text class="n-sub" x="{{ n.x + 12 }}" y="{{ below }}">
+            {{ n.urgency_date }}{% if n.days_left is not none %} · {{ n.days_left }}d{% endif %}</text>
+        {% endif %}
+      </g>
+      {% endfor %}
+    </svg>
+  </div>
+
+  <div class="map-key">
+    <span class="k-considers"><i></i>available to this matter</span>
+    <span class="k-blocks"><i></i>blocked by a missing record fact</span>
+    <span class="k-preserves"><i></i>preserves an issue for appeal</span>
+    <span>Position carries no ranking. Nothing here predicts a ruling.</span>
+  </div>
+  {% else %}
+  <div class="atlas-body"><p class="muted">{{ graph.empty_reason if graph else 'Choose a matter.' }}</p></div>
+  {% endif %}
+</section>
+
+{% if graph and graph.links %}
+<section class="panel">
+  <header><b>Cross-case references</b><span class="spacer"></span>
+    <span class="chip">linked, never merged</span></header>
+  <table class="tbl">
+    <thead><tr><th>Related matter</th><th>Case number</th><th>Relationship</th></tr></thead>
+    <tbody>
+    {% for l in graph.links %}
+      <tr><td>{{ l.title }}</td><td>{{ l.case_number or '—' }}</td>
+          <td><span class="chip {{ 'danger' if l.relationship == 'MUST_REMAIN_SEPARATE' }}">{{ l.relationship }}</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
 <div class="atlas">
   <div class="atlas-col can">
     <header><b>Can be prepared now</b>
@@ -124,25 +196,38 @@
     </div>
   </div>
 
-  <div class="panel">
-    <div class="panel-head"><h2>Plain English</h2></div>
-    <div class="panel-body">
-      <div class="explain"><b>Preservation</b>
-        <p>Raising an issue, asking for a ruling on it, and getting one — so a
-           reviewing court can consider it later. An issue never raised is
-           usually not reviewable.</p></div>
-      <div class="explain"><b>Exceptions</b>
-        <p>Written objections to a Recommended Decision. Missing the window can
-           forfeit the objection even when the point was good.</p></div>
-      <div class="explain"><b>Waiver</b>
-        <p>Losing a right by not asserting it in time. An unruled motion left
-           alone on the record is the common way this happens.</p></div>
-      <div class="explain"><b>Why "blocked" and not "unlikely"</b>
-        <p>A path here is blocked when a named record fact is missing, and the
-           missing thing is stated so it can be fixed. This system does not
-           estimate how likely a filing is to succeed.</p></div>
-    </div>
-  </div>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block inspector_title %}Reading the map{% endblock %}
+{% block inspector %}
+  <div class="ins-card good"><h4>Open</h4>
+    <p>This system found no recorded obstacle. That is a statement about the
+       record, not advice that the path is available in law.</p></div>
+
+  <div class="ins-card stop"><h4>Blocked</h4>
+    <p>A named record fact is missing, and the map states which one, so it can
+       be fixed. Blocked never means unlikely — nothing here estimates whether a
+       filing would succeed.</p></div>
+
+  <div class="ins-card warn"><h4>Missing from record</h4>
+    <p>The amber node is the prerequisite itself. Supply it and the path it
+       gates stops being blocked.</p></div>
+
+  <div class="ins-card"><h4>Preserves</h4>
+    <p>Taking the step keeps an issue reviewable on appeal. An issue never
+       raised is usually not reviewable at all.</p></div>
+
+  <div class="ins-card"><h4>Exceptions</h4>
+    <p>Written objections to a Recommended Decision. Missing the window can
+       forfeit the objection even when the point was good.</p></div>
+
+  <div class="ins-card"><h4>Waiver</h4>
+    <p>Losing a right by not asserting it in time. An unruled motion left alone
+       on the record is the common way this happens.</p></div>
+
+  <div class="ins-card"><h4>Why there is no score</h4>
+    <p>Every number on this page is a count with a denominator, so it can be
+       checked against the record. A single health percentage could not be.</p></div>
 {% endblock %}

@@ -567,6 +567,7 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
             data = atlas.build_atlas(conn, matter_id) if matter_id else {}
             self._render("atlas.html", conn, nav_active="atlas", data=data,
                          matters=matters,
+                         graph=atlas.graph(conn, matter_id) if matter_id else {},
                          coverage=atlas.coverage(conn, matter_id) if matter_id else {})
         finally:
             conn.close()
