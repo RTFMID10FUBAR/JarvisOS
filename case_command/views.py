@@ -145,6 +145,7 @@ def dashboard(conn: sqlite3.Connection) -> dict[str, Any]:
             JOIN fleet_proposal_items i ON i.proposal_id=p.id AND i.decision='PENDING'
             GROUP BY p.id ORDER BY p.created_at DESC
         """),
+        "access_barriers": _access_barrier_summary(conn),
         "todays_actions": _todays_actions(conn, deadlines),
         "matters": list_matters(conn),
         "counts": {
@@ -156,6 +157,13 @@ def dashboard(conn: sqlite3.Connection) -> dict[str, Any]:
             ).fetchone()["n"],
         },
     }
+
+
+def _access_barrier_summary(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Barriers that prevented a filing — evidence of prejudice, not a complaint."""
+    from . import access
+
+    return access.summarize(conn)
 
 
 def _todays_actions(conn: sqlite3.Connection, deadlines: list[dict[str, Any]]) -> list[dict[str, Any]]:

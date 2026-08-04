@@ -15,8 +15,8 @@ import unittest
 from pathlib import Path
 
 from .. import (
-    audit, backup, checks, fleet, health, migrate_tree, packets, preservation,
-    triage, views, watcher,
+    access, audit, backup, checks, fleet, health, migrate_tree, packets,
+    preservation, triage, views, watcher,
 )
 from ..classify import classify_text
 from ..config import (
@@ -1057,6 +1057,108 @@ class TestTriage(CaseCommandTest):
         lines = [line for line in csv_text.splitlines() if line.strip()]
         self.assertEqual(len(lines), report["total"] + 1)   # + header
         self.assertIn("what_it_is_extract", lines[0])
+
+
+# ===========================================================================
+# Access barriers
+# ===========================================================================
+class TestAccessBarriers(CaseCommandTest):
+
+    def _log(self, **overrides):
+        payload = {
+            "incident_date": "2026-03-10",
+            "barrier_type": "NO_ELECTRICITY",
+            "what_was_blocked": "Response to APCo Answer",
+            "matter_id": self.matter("psc-26-0315")["id"],
+        }
+        payload.update(overrides)
+        return access.log_barrier(self.conn, **payload)
+
+    def test_barrier_links_to_the_prejudice_issues(self):
+        """A logged barrier attaches to PSC-020 and PSC-021 automatically."""
+        result = self._log()
+        self.assertEqual(set(result["linked_issues"]), {"PSC-020", "PSC-021"})
+
+        for key in ("PSC-020", "PSC-021"):
+            issue = self.conn.execute(
+                "SELECT id FROM issues WHERE issue_key=?", (key,)).fetchone()
+            link = self.conn.execute(
+                "SELECT * FROM issue_links WHERE issue_id=? AND linked_type='access_barrier' "
+                "AND linked_id=?", (issue["id"], result["barrier_id"])).fetchone()
+            self.assertIsNotNone(link, f"{key} not linked")
+            # Proposed, not auto-approved.
+            self.assertEqual(link["approved"], 0)
+
+    def test_a_barrier_without_proof_is_not_verified(self):
+        result = self._log()
+        self.assertEqual(result["verification_status"], "UNKNOWN")
+        row = self.conn.execute("SELECT * FROM access_barriers WHERE id=?",
+                                (result["barrier_id"],)).fetchone()
+        self.assertIsNone(row["evidence_document_id"])
+
+    def test_attaching_proof_upgrades_verification(self):
+        document = ingest_path(self.config, self.conn, self.paths["psc_order"])
+        result = self._log()
+        outcome = access.attach_evidence(self.conn, result["barrier_id"],
+                                         document.document_id, locator="p.1")
+        self.assertEqual(outcome["verification_status"], "VERIFIED_SECONDARY")
+        row = self.conn.execute("SELECT * FROM access_barriers WHERE id=?",
+                                (result["barrier_id"],)).fetchone()
+        self.assertEqual(row["source_document_id"], document.document_id)
+        self.assertEqual(row["source_page_or_paragraph"], "p.1")
+
+    def test_a_vague_entry_is_refused(self):
+        """A general assertion of hardship is not evidence and is not accepted."""
+        with self.assertRaises(ValueError) as ctx:
+            self._log(what_was_blocked="   ")
+        self.assertIn("not evidence", str(ctx.exception))
+
+    def test_invalid_barrier_type_is_refused(self):
+        with self.assertRaises(ValueError):
+            self._log(barrier_type="EVERYTHING_IS_BAD")
+
+    def test_summary_counts_but_does_not_conclude(self):
+        """The summary arranges what was entered; it draws no legal conclusion."""
+        self._log(deadline_affected="Response due", deadline_date="2026-03-15",
+                  hours_lost=4.0)
+        self._log(incident_date="2026-04-02", barrier_type="NO_PRINTER",
+                  what_was_blocked="Exceptions to Recommended Decision",
+                  reported_to_tribunal=True, cost_incurred=18.5)
+
+        summary = access.summarize(self.conn)
+        self.assertEqual(summary["count"], 2)
+        self.assertEqual(summary["date_range"], "2026-03-10 to 2026-04-02")
+        self.assertEqual(summary["total_hours_lost"], 4.0)
+        self.assertEqual(summary["total_cost_incurred"], 18.5)
+        self.assertEqual(summary["reported_to_tribunal"], 1)
+
+        # No characterization of the incidents anywhere in the output.
+        blob = json.dumps(summary).lower()
+        for word in ("prejudice occurred", "violation", "unlawful", "wrongful",
+                     "egregious", "deliberate"):
+            self.assertNotIn(word, blob)
+
+    def test_summary_names_its_own_weaknesses(self):
+        self._log()
+        summary = access.summarize(self.conn)
+        gaps = " ".join(summary["gaps"]).lower()
+        self.assertIn("no supporting document", gaps)
+        self.assertIn("never reported to the tribunal", gaps)
+
+    def test_empty_log_says_so_rather_than_implying_no_barriers_existed(self):
+        summary = access.summarize(self.conn)
+        self.assertEqual(summary["count"], 0)
+        self.assertIn("contemporaneous", summary["note"])
+
+    def test_barriers_cannot_be_deleted(self):
+        self._log()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute("DELETE FROM access_barriers")
+
+    def test_barrier_appears_on_the_dashboard(self):
+        self._log(deadline_affected="Response due", deadline_date="2026-03-15")
+        data = views.dashboard(self.conn)
+        self.assertEqual(data["access_barriers"]["count"], 1)
 
 
 if __name__ == "__main__":

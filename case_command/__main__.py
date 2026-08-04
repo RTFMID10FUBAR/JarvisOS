@@ -13,8 +13,8 @@ import sys
 from pathlib import Path
 
 from . import (
-    __version__, audit, backup, checks, fleet, health, migrate_tree, packets,
-    triage, views, watcher,
+    __version__, access, audit, backup, checks, fleet, health, migrate_tree,
+    packets, triage, views, watcher,
 )
 from .config import LITIGATION_FOLDERS, ensure_layout, load_config
 from .db import open_database
@@ -203,6 +203,51 @@ def cmd_triage(args) -> int:
     return 0
 
 
+def cmd_access(args) -> int:
+    """Log and review access barriers — what actually prevented a filing."""
+    config = _config(args)
+    conn = open_database(config)
+    try:
+        if args.action == "log":
+            if not args.blocked:
+                print("--blocked is required: name the specific filing, service, or "
+                      "appearance that was prevented. A general statement of hardship "
+                      "is not evidence.", file=sys.stderr)
+                return 1
+            result = access.log_barrier(
+                conn,
+                incident_date=args.date,
+                barrier_type=args.type,
+                what_was_blocked=args.blocked,
+                matter_id=args.matter_id,
+                deadline_affected=args.deadline,
+                deadline_date=args.deadline_date,
+                workaround_attempted=args.tried,
+                workaround_result=args.result,
+                hours_lost=args.hours,
+                cost_incurred=args.cost,
+                reported_to_tribunal=args.reported,
+                how_reported=args.how_reported,
+                evidence_document_id=args.evidence_id,
+                notes=args.note,
+                actor=args.actor,
+            )
+            _print(result)
+        elif args.action == "list":
+            if args.json:
+                _print(access.list_barriers(conn, args.matter_id, args.type))
+            else:
+                print(access.format_log(conn, args.matter_id))
+        elif args.action == "summary":
+            _print(access.summarize(conn, args.matter_id))
+        elif args.action == "attach":
+            _print(access.attach_evidence(conn, args.barrier_id, args.evidence_id,
+                                          locator=args.locator, actor=args.actor))
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_backup(args) -> int:
     config = _config(args)
     conn = open_database(config, migrate_if_needed=False)
@@ -359,6 +404,31 @@ def build_parser() -> argparse.ArgumentParser:
                    + ", ".join(triage.TRIAGE_STATUSES))
     p.add_argument("--note")
     p.set_defaults(func=cmd_triage)
+
+    p = sub.add_parser("access",
+                       help="log what prevented a filing — evidence of prejudice")
+    p.add_argument("action", choices=["log", "list", "summary", "attach"], nargs="?",
+                   default="list")
+    p.add_argument("--date", help="incident date, YYYY-MM-DD")
+    p.add_argument("--type", choices=list(access.BARRIER_TYPES), default="OTHER")
+    p.add_argument("--blocked", help="the specific filing, service, or appearance prevented")
+    p.add_argument("--matter-id", type=int)
+    p.add_argument("--deadline", help="the deadline this affected")
+    p.add_argument("--deadline-date")
+    p.add_argument("--tried", help="workaround attempted")
+    p.add_argument("--result", help="what came of the workaround")
+    p.add_argument("--hours", type=float, help="hours lost")
+    p.add_argument("--cost", type=float, help="cost incurred")
+    p.add_argument("--reported", action="store_true",
+                   help="the tribunal was told about this barrier")
+    p.add_argument("--how-reported")
+    p.add_argument("--barrier-id", type=int, help="for `attach`")
+    p.add_argument("--evidence-id", type=int,
+                   help="document id of supporting proof (shutoff notice, receipt)")
+    p.add_argument("--locator", help="page or paragraph in the supporting document")
+    p.add_argument("--note")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_access)
 
     p = sub.add_parser("backup", help="backup, verify, and restore")
     p.add_argument("action", choices=["create", "list", "verify", "restore", "prune"])

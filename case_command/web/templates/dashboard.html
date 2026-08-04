@@ -130,6 +130,26 @@
     {% else %}<p class="empty">No defense recorded. Run a red-team review.</p>{% endif %}
   </div>
 
+  <div class="card {{ 'urgent' if data.access_barriers.count }}">
+    <div class="metric-label">Access barriers (prejudice evidence)</div>
+    <div class="metric">{{ data.access_barriers.count }}</div>
+    {% if data.access_barriers.count %}
+      <div class="sub">{{ data.access_barriers.date_range }} ·
+        {{ data.access_barriers.deadlines_affected }} deadline(s) affected ·
+        {{ data.access_barriers.with_supporting_document }} with proof</div>
+      {% for entry in data.access_barriers.deadline_list[:3] %}
+        <div>{{ entry.date }} — {{ entry.blocked }}
+          <span class="chip urgent">{{ entry.barrier }}</span></div>
+      {% endfor %}
+      {% for gap in data.access_barriers.gaps[:2] %}
+        <div class="sub missing">{{ gap }}</div>
+      {% endfor %}
+      <div class="sub">Linked to {{ data.access_barriers.linked_issues | join(', ') }}</div>
+    {% else %}
+      <p class="empty">{{ data.access_barriers.note }}</p>
+    {% endif %}
+  </div>
+
   <div class="card {{ 'warn' if data.open_approvals }}">
     <div class="metric-label">Waiting on you</div>
     <div class="metric">{{ data.open_approvals | length }}</div>
