@@ -206,27 +206,76 @@ SYNC_TABLES: dict[str, str] = {
 #: A first sync has no cursor. This is early enough to mean "everything".
 EPOCH = "1970-01-01T00:00:00.000Z"
 
+#: Rows per table per request. A client may ask for fewer — on a bad
+#: connection a small page that arrives beats a large one that times out — and
+#: may not ask for more, so one request can never be made to haul the whole
+#: record.
+DEFAULT_SYNC_LIMIT = 500
+MAX_SYNC_LIMIT = 2000
+
 
 def sync(conn: sqlite3.Connection, *, since: str | None = None,
-         device: sqlite3.Row | None = None, limit_per_table: int = 500) -> dict[str, Any]:
+         device: sqlite3.Row | None = None,
+         limit_per_table: int = DEFAULT_SYNC_LIMIT) -> dict[str, Any]:
     """Everything that changed after *since*.
 
-    The cursor is a timestamp. It is generated before the queries run, not
-    after, so a row written mid-sync is picked up next time rather than skipped.
+    The cursor is a timestamp, and where it lands is the whole correctness
+    argument for this function.
+
+    When nothing was truncated the cursor is wall-clock time read *before* the
+    queries ran, so a row written mid-sync is picked up next time rather than
+    falling into the gap between the query and the answer.
+
+    When a page was truncated the cursor must instead be a position inside the
+    data, because wall-clock time would carry the client past every row it has
+    not yet seen — and a client that has moved its cursor past a row will never
+    ask for that row again. It would not fail; it would report success while
+    silently holding an incomplete record. For a system whose entire purpose is
+    that no document goes missing, that is the worst available outcome, so the
+    truncated case takes the earliest timestamp any capped table stopped at.
+    Tables that were already exhausted get re-read on the next round. Re-reading
+    is free — the client upserts by primary key — and it is the correct thing to
+    trade away.
+
+    Truncation never splits a group of rows sharing one timestamp. Rows written
+    in a single transaction have identical `updated_at`, and advancing past a
+    timestamp whose group was only half-read would lose the other half. A page
+    that ends mid-group is extended to the end of that group, so the row limit
+    is a target rather than a hard cap.
     """
+    limit = max(1, int(limit_per_table))
     cursor = since or EPOCH
-    next_cursor = utcnow()
+    wall_clock = utcnow()
 
     changed: dict[str, list[dict[str, Any]]] = {}
     counts: dict[str, int] = {}
+    stopped_at: dict[str, str] = {}
+
     for table, query in SYNC_TABLES.items():
         rows = [dict(r) for r in conn.execute(
-            f"{query} ORDER BY updated_at LIMIT {int(limit_per_table)}", (cursor,))]
+            f"{query} ORDER BY updated_at, id LIMIT {limit}", (cursor,))]
+
+        if len(rows) == limit:
+            # The page ended somewhere. Pull in the rest of the final
+            # timestamp's group so the cursor can move past it safely.
+            edge = rows[-1]["updated_at"]
+            rows.extend(dict(r) for r in conn.execute(
+                f"{query} AND updated_at = ? AND id > ? ORDER BY id",
+                (cursor, edge, rows[-1]["id"])))
+            # Only report more waiting if something actually is. A page that
+            # happens to land exactly on the end of the data is finished, and
+            # saying otherwise costs the client a pointless round trip.
+            if conn.execute(f"{query} AND updated_at > ? LIMIT 1",
+                            (cursor, edge)).fetchone() is not None:
+                stopped_at[table] = edge
+
         if rows:
             changed[table] = rows
         counts[table] = len(rows)
 
-    truncated = [t for t, n in counts.items() if n >= limit_per_table]
+    truncated = sorted(stopped_at)
+    # Earliest stopping point wins: no capped table may be skipped past.
+    next_cursor = min(stopped_at.values()) if stopped_at else wall_clock
 
     if device is not None:
         conn.execute(

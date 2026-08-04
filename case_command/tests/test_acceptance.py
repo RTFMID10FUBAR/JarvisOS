@@ -15,15 +15,16 @@ import unittest
 from pathlib import Path
 
 from .. import (
-    access, api, audit, backup, checks, fleet, health, migrate_tree, offline,
-    packets, preservation, triage, views, watcher,
+    access, api, audit, backup, checks, client, fleet, health, migrate_tree,
+    offline, packets, preservation, triage, views, watcher,
 )
 from ..classify import classify_text
 from ..config import (
     ARCHIVE, FINAL_FILINGS, INBOX, MORTGAGE, PSC_AEP, SHARED_EVIDENCE,
     VETERANS, ensure_layout, load_config,
 )
-from ..db import insert, open_database
+from ..db import insert, open_database, utcnow
+from ..hashing import sha256_bytes
 from ..ingest import ingest_path, scan_all
 from .fixtures import build_fixture_tree, PSC_COMPLAINT
 
@@ -1462,6 +1463,149 @@ class TestApi(CaseCommandTest):
         joined = " ".join(index["guarantees"]).lower()
         self.assertIn("read-only", joined)
         self.assertIn("transmits", joined)
+
+
+class TestSyncPaging(CaseCommandTest):
+    """A paged sync must deliver exactly what an unpaged one does.
+
+    These exist because the first version did not. It set the cursor to
+    wall-clock time on every response, so a client that received a capped page
+    moved its cursor past everything it had not yet seen and never asked again.
+    It did not error. It reported success while holding a fraction of the
+    record — the one failure this system cannot tolerate, and the reason the
+    conformance rule walks the whole record one row at a time instead of
+    checking that a field exists.
+    """
+
+    def _walk(self, limit: int) -> dict[str, list[int]]:
+        """Every row id per table, gathered by paging with `limit` per table."""
+        seen: dict[str, set[int]] = {t: set() for t in api.SYNC_TABLES}
+        cursor, rounds = None, 0
+        while True:
+            rounds += 1
+            self.assertLess(rounds, 500, "paged sync did not converge")
+            page = api.sync(self.conn, since=cursor, limit_per_table=limit)
+            for table, rows in page["changed"].items():
+                seen[table].update(r["id"] for r in rows)
+            cursor = page["next_cursor"]
+            if not page["more_available"]:
+                break
+        self.rounds = rounds
+        return {t: sorted(ids) for t, ids in seen.items()}
+
+    def test_paging_one_row_at_a_time_loses_nothing(self):
+        self.ingest_all()
+        whole = api.sync(self.conn, limit_per_table=10_000)
+        expected = {t: sorted(r["id"] for r in whole["changed"].get(t, []))
+                    for t in api.SYNC_TABLES}
+        self.assertGreater(sum(len(v) for v in expected.values()), 50)
+
+        self.assertEqual(self._walk(1), expected)
+        self.assertGreater(self.rounds, 1, "a limit of 1 should have needed many rounds")
+        self.assertEqual(self._walk(7), expected)
+
+    def test_a_truncated_page_never_advances_the_cursor_to_now(self):
+        self.ingest_all()
+        page = api.sync(self.conn, limit_per_table=1)
+        self.assertTrue(page["more_available"])
+        # The cursor must sit inside the data, not at wall-clock time. Every
+        # row still waiting has updated_at >= it.
+        self.assertLess(page["next_cursor"], utcnow())
+        delivered = sum(len(rows) for rows in page["changed"].values())
+        follow_up = api.sync(self.conn, since=page["next_cursor"],
+                             limit_per_table=10_000)
+        self.assertGreater(follow_up["total"], 0,
+                           "the cursor moved past everything still waiting")
+        whole = api.sync(self.conn, limit_per_table=10_000)
+        # Nothing was stranded: what came back plus what is still waiting
+        # accounts for the entire record (re-reads only ever add).
+        self.assertGreaterEqual(delivered + follow_up["total"], whole["total"])
+
+    def test_a_timestamp_group_is_never_split(self):
+        """Rows written in one transaction share a timestamp and must page together."""
+        self.ingest_all()
+        stamp = "2026-01-01T00:00:00.000Z"
+        self.conn.execute("UPDATE issues SET updated_at=?", (stamp,))
+        self.conn.commit()
+        total = self.conn.execute("SELECT COUNT(*) c FROM issues").fetchone()["c"]
+
+        page = api.sync(self.conn, since="2025-12-31T00:00:00.000Z", limit_per_table=1)
+        # The limit is a target, not a cap: the whole group came back rather
+        # than one row of it, because the cursor cannot stop mid-group without
+        # stranding the rest.
+        self.assertEqual(len(page["changed"]["issues"]), total)
+        self.assertNotEqual(page["next_cursor"], stamp,
+                            "cursor stopped on a fully-delivered group")
+
+    def test_a_page_landing_exactly_on_the_end_is_not_reported_as_more(self):
+        self.ingest_all()
+        total = self.conn.execute("SELECT COUNT(*) c FROM matters").fetchone()["c"]
+        page = api.sync(self.conn, limit_per_table=total)
+        self.assertNotIn("matters", page["truncated_tables"])
+
+    def test_more_available_and_truncated_tables_agree(self):
+        self.ingest_all()
+        for limit in (1, 3, 10, 10_000):
+            page = api.sync(self.conn, limit_per_table=limit)
+            self.assertEqual(page["more_available"], bool(page["truncated_tables"]),
+                             f"disagreement at limit={limit}")
+
+
+class TestReferenceClient(CaseCommandTest):
+    """The device side: what the phone holds, and what it refuses to trust."""
+
+    def store(self):
+        store = client.LocalStore(Path(self.root) / "device.db")
+        self.addCleanup(store.close)
+        return store
+
+    def test_a_tampered_cache_is_discarded_rather_than_served(self):
+        """"It was in my phone's cache" is not a provenance."""
+        store = self.store()
+        data = b"the original exhibit"
+        digest = sha256_bytes(data)
+        store.put_blob(sha256=digest, doc_uid="CC-DOC-000001",
+                       filename="exhibit.txt", data=data)
+        self.assertEqual(store.blob(digest), data)
+
+        store.conn.execute("UPDATE blobs SET data=? WHERE sha256=?",
+                           (b"something else entirely", digest))
+        store.conn.commit()
+        with self.assertRaises(client.ClientError):
+            store.blob(digest)
+        # And it is gone, not left to be served on the next attempt.
+        self.assertIsNone(store.blob(digest))
+
+    def test_a_capture_taken_offline_is_kept(self):
+        store = self.store()
+        uid = store.queue_capture(filename="notice.jpg", data=b"bytes",
+                                  captured_at="2026-08-04T09:00:00.000Z")
+        self.assertEqual(len(store.pending()), 1)
+        # A retry reuses the same client_uid, so the server counts one capture.
+        with self.assertRaises(sqlite3.IntegrityError):
+            store.queue_capture(filename="notice.jpg", data=b"bytes",
+                                captured_at="2026-08-04T09:00:00.000Z", client_uid=uid)
+        store.mark_sent(uid)
+        self.assertEqual(store.pending(), [])
+
+    def test_the_mirror_survives_a_column_it_has_never_seen(self):
+        """A phone that cannot sync is worse than one that does not know a column."""
+        store = self.store()
+        store.apply("issues", [{"id": 1, "matter_id": 2, "updated_at": "2026-01-01",
+                                "title": "Curtailment", "a_field_from_the_future": 7}])
+        row = store.row("issues", 1)
+        self.assertEqual(row["title"], "Curtailment")
+        self.assertEqual(row["a_field_from_the_future"], 7)
+
+    def test_every_conformance_rule_has_a_description(self):
+        rules = dict(client.CONFORMANCE_RULES)
+        self.assertEqual(len(rules), len(client.CONFORMANCE_RULES))
+        for name, text in rules.items():
+            self.assertTrue(text.endswith("."), f"{name} description is not a sentence")
+
+    def test_the_mirror_covers_every_table_the_server_replicates(self):
+        """A table the server sends and the client ignores is a silent gap."""
+        self.assertEqual(set(client.MIRROR_TABLES), set(api.SYNC_TABLES))
 
 
 if __name__ == "__main__":

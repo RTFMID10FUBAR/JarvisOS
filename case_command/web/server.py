@@ -308,8 +308,13 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
             device = api.authenticate(conn, self.headers.get("Authorization"))
 
             if parts == ["sync"]:
+                # A phone on a bad connection wants smaller pages: a request
+                # that completes is worth more than a large one that times out.
+                # Bounded so a client cannot ask for the whole record at once.
+                limit = self._int(params, "limit") or api.DEFAULT_SYNC_LIMIT
+                limit = max(1, min(int(limit), api.MAX_SYNC_LIMIT))
                 return self._json(api.sync(conn, since=self._str(params, "since"),
-                                           device=device))
+                                           device=device, limit_per_table=limit))
             if parts == ["matters"]:
                 return self._json({"matters": views.list_matters(conn)})
             if len(parts) == 2 and parts[0] == "matters":

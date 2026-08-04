@@ -298,6 +298,43 @@ def cmd_offline(args) -> int:
     return 0
 
 
+def cmd_conform(args) -> int:
+    """Drive a running server through every rule a sync client has to obey.
+
+    This is what makes "the phone app works" checkable rather than asserted.
+    The reference client runs the rules here; a native client is finished when
+    it passes the same list.
+    """
+    from . import client as refclient
+
+    config = _config(args)
+    conn = open_database(config)
+    try:
+        code = api.create_pairing_code(conn, actor="conformance")["code"]
+    finally:
+        conn.close()
+
+    def revoke(device_uid: str) -> None:
+        inner = open_database(config)
+        try:
+            api.revoke_device(inner, device_uid, reason="conformance run",
+                              actor="conformance")
+        finally:
+            inner.close()
+
+    store = Path(args.store) if args.store else config.control_root / "conformance.db"
+    if store.exists():
+        store.unlink()
+
+    report = refclient.conformance(args.server, code, store,
+                                   revoke=None if args.keep_device else revoke)
+    if args.json:
+        _print(report)
+    else:
+        print(refclient.format_conformance(report))
+    return 0 if report["all_passed"] else 1
+
+
 def cmd_device(args) -> int:
     """Pair and manage the phones allowed to reach the API."""
     config = _config(args)
@@ -540,6 +577,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_device)
+
+    p = sub.add_parser("conform", help="check a client against the sync protocol rules")
+    p.add_argument("--server", default="http://127.0.0.1:8787",
+                   help="base URL of a running case-command serve")
+    p.add_argument("--store", help="where to keep the simulated device's copy")
+    p.add_argument("--keep-device", action="store_true",
+                   help="do not revoke the test device afterwards")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_conform)
 
     p = sub.add_parser("backup", help="backup, verify, and restore")
     p.add_argument("action", choices=["create", "list", "verify", "restore", "prune"])
