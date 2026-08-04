@@ -52,28 +52,160 @@
   <a href="/timeline"><button type="button">Reset</button></a>
 </form>
 
+{% if proof_coverage %}
+<div class="banner">
+  <b>{{ proof_coverage.label }}.</b>
+  {{ proof_coverage.testimonial_only }} rest on an account rather than a document;
+  {{ proof_coverage.unproved }} have nothing attached yet.
+  <span class="sub">{{ proof_coverage.note }}</span>
+</div>
+{% endif %}
+
 <div class="table-wrap">
 <table>
-  <tr><th>Date</th><th>Event</th><th>Matter</th><th>Type</th><th>Actor</th>
-      <th>Pre/post order</th><th>Boundary</th><th>Verification</th><th>Source</th></tr>
+  <tr><th>Date</th><th>Event</th><th>Matter</th><th>Type</th>
+      <th>Boundary</th><th>Verification</th><th>What proves it</th><th></th></tr>
   {% for e in data.events %}
-  <tr>
-    <td>{{ e.event_date or '—' }}</td>
+  {% set pf = proof.get(e.id) %}
+  <tr class="{{ 'row-recalled' if e.recalled }}">
+    <td>
+      {{ e.event_date or '—' }}
+      {% if e.date_precision and e.date_precision != 'EXACT' %}
+        <div class="sub">{{ e.date_precision.replace('_', ' ')|lower }}</div>
+      {% endif %}
+    </td>
     <td>{{ e.title }}
       {% if e.disputed %}<span class="chip urgent">disputed</span>{% endif %}
+      {% if e.origin == 'MANUAL' %}<span class="chip">added by hand</span>{% endif %}
+      {% if e.recalled %}<span class="chip warn">from memory</span>{% endif %}
       {% if e.legal_significance %}<div class="sub">{{ e.legal_significance }}</div>{% endif %}</td>
     <td>{{ e.matter_slug or '—' }}</td>
     <td>{{ e.event_type or '—' }}</td>
-    <td>{{ e.actor_name or '—' }}</td>
-    <td><span class="chip {{ 'warn' if e.relative_to_order == 'POST_ORDER' }}">{{ e.relative_to_order }}</span></td>
     <td>{{ e.boundary_classification }}</td>
     <td><span class="chip {{ 'ok' if 'VERIFIED' in e.verification_status else 'warn' }}">{{ e.verification_status }}</span></td>
-    <td>{% if e.doc_uid %}{{ e.doc_uid }} {{ e.source_page_or_paragraph or '' }}
-        {% else %}<span class="missing">no source</span>{% endif %}</td>
+
+    <td class="proof-cell">
+      {% if pf and pf.proofs %}
+        {% for p in pf.proofs %}
+          <div class="proof {{ 'documentary' if p.is_documentary else 'testimonial' }}">
+            {% if p.is_documentary %}
+              <a href="/document?uid={{ p.doc_uid }}"><b>{{ p.doc_uid }}</b></a>
+              {% if p.locator %}<span class="loc">{{ p.locator }}</span>{% endif %}
+              {% if p.document_missing %}
+                <span class="chip danger">file not at its recorded path</span>
+              {% endif %}
+            {% else %}
+              <b>{{ p.proof_type|lower|replace('_', ' ') }}</b> — {{ p.asserted_by }}
+              {% if p.recorded_after_days is not none and p.recorded_after_days > 0 %}
+                <span class="loc">recorded {{ p.recorded_after_days }} days after</span>
+              {% endif %}
+            {% endif %}
+            {% if p.detail %}<div class="sub">{{ p.detail }}</div>{% endif %}
+          </div>
+        {% endfor %}
+      {% elif e.doc_uid %}
+        <div class="proof documentary">
+          <a href="/document?uid={{ e.doc_uid }}"><b>{{ e.doc_uid }}</b></a>
+          {% if e.source_page_or_paragraph %}<span class="loc">{{ e.source_page_or_paragraph }}</span>{% endif %}
+        </div>
+      {% else %}
+        <span class="missing">nothing in the record proves this yet</span>
+      {% endif %}
+    </td>
+
+    <td class="nowrap">
+      <details class="row-add">
+        <summary>attach proof</summary>
+        <form method="post" action="/timeline/proof">
+          <input type="hidden" name="event_id" value="{{ e.id }}">
+          <input type="hidden" name="back" value="{{ back }}">
+          <label>What kind
+            <select name="proof_type" required>
+              {% for k, label in proof_labels %}
+                <option value="{{ k }}">{{ k|lower|replace('_',' ') }} — {{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Document (for documentary proof)
+            <select name="document_id">
+              <option value="">—</option>
+              {% for d in documents %}
+                <option value="{{ d.id }}">{{ d.doc_uid }} · {{ d.document_date or 'no date' }} · {{ (d.extract_line or d.title or '')[:60] }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Where in it <input type="text" name="locator" placeholder="p. 2 ¶ 4"></label>
+          <label>Who says so <input type="text" name="asserted_by" placeholder="Jacob Kerr"></label>
+          <label>What it shows <input type="text" name="detail" placeholder="quote or close paraphrase"></label>
+          <button class="primary" type="submit">Attach</button>
+        </form>
+      </details>
+    </td>
   </tr>
   {% else %}
-  <tr><td colspan="9" class="empty">No events match these filters.</td></tr>
+  <tr><td colspan="8" class="empty">No events match these filters.</td></tr>
   {% endfor %}
 </table>
 </div>
+
+<section class="panel" id="add">
+  <header><b>Add an event</b><span class="spacer"></span>
+    <span class="chip">recorded with no proof until you attach some</span></header>
+  <form class="filters" method="post" action="/timeline/add">
+    <input type="hidden" name="back" value="{{ back }}">
+    <label>What happened <input type="text" name="title" required size="42"
+      placeholder="in your own words"></label>
+    <label>Date <input type="date" name="event_date"></label>
+    <label>How sure of the date
+      <select name="date_precision">
+        {% for p in date_precisions %}<option value="{{ p }}">{{ p|lower|replace('_',' ') }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Matter
+      <select name="matter_id">
+        <option value="">unassigned</option>
+        {% for m in matters %}<option value="{{ m.id }}">{{ m.title }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Type <input type="text" name="event_type" placeholder="OUTAGE, CALL, NOTICE"></label>
+    <label>Why it matters <input type="text" name="legal_significance" size="30"></label>
+    <label class="check"><input type="checkbox" name="recalled" value="1"> I am recalling this, not reading it</label>
+    <button class="primary" type="submit">Add to timeline</button>
+  </form>
+  {% if error %}<div class="banner warn">{{ error }}</div>{% endif %}
+</section>
+{% endblock %}
+
+{% block inspector_title %}What counts as proof{% endblock %}
+{% block inspector %}
+  <div class="ins-card good"><h4>A document in the record</h4>
+    <p>Something another person can open and read. It needs a locator — a page
+       or paragraph — because "it is in the record somewhere" cannot be handed
+       to a tribunal. Documentary proof is refused here without one.</p></div>
+
+  <div class="ins-card warn"><h4>Something you recall</h4>
+    <p>Worth recording, and not proof of the fact. It is a record that you
+       recall it, made on a date. It never raises an event above UNKNOWN, and
+       the timeline always shows how long after the event it was written down.</p></div>
+
+  <div class="ins-card"><h4>Why the gap is shown</h4>
+    <p>A memory written down the same week is a different thing from the same
+       memory written down two years later. The gap is arithmetic on two dates,
+       so it is reported. It is not scored, and it does not mean the account is
+       wrong.</p></div>
+
+  <div class="ins-card"><h4>Attaching proof does not verify</h4>
+    <p>Documentary proof moves an event to PARTIALLY_VERIFIED and no further.
+       Someone still has to open the document and confirm it says what the event
+       claims. VERIFIED_PRIMARY is a decision a person makes.</p></div>
+
+  <div class="ins-card stop"><h4>Nothing is deleted</h4>
+    <p>Proof cannot be removed, only superseded. A proof row that quietly
+       vanished would leave an event looking better supported than its history
+       shows.</p></div>
+
+  <div class="ins-card"><h4>Filing and order dates</h4>
+    <p>These are read off the document itself — the signature block, the dated
+       line, the service date — and every one carries the cue it came from. You
+       do not need to enter them by hand.</p></div>
 {% endblock %}

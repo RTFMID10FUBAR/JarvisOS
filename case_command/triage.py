@@ -177,11 +177,21 @@ def _date_for(row: dict[str, Any]) -> tuple[str | None, str]:
 
 def chronology(conn: sqlite3.Connection, *, matter_id: int | None = None,
                folder: str | None = None, status: str | None = None,
-               include_duplicates: bool = True) -> dict[str, Any]:
+               include_duplicates: bool = True,
+               verification: str | None = None,
+               ocr: bool | None = None,
+               has_date: bool | None = None,
+               keyword: str | None = None,
+               no_matter: bool = False) -> dict[str, Any]:
     """Every document in date order, with flags for triage.
 
     Undated documents are returned in a separate list rather than being sorted
     to the top or dropped — an unknown date is not a date.
+
+    ``has_date`` narrows to the dated list (True) or the undated list (False);
+    left None, both are returned. ``keyword`` matches, case-insensitively,
+    against the verbatim extract line only — never against a generated field,
+    because there isn't one.
     """
     sql = ["""
         SELECT d.*, m.slug AS matter_slug, m.title AS matter_title,
@@ -204,6 +214,14 @@ def chronology(conn: sqlite3.Connection, *, matter_id: int | None = None,
     if status:
         sql.append("AND d.triage_status=?")
         params.append(status)
+    if verification:
+        sql.append("AND d.verification_status=?")
+        params.append(verification)
+    if ocr is not None:
+        sql.append("AND d.ocr_used=?")
+        params.append(1 if ocr else 0)
+    if no_matter:
+        sql.append("AND d.matter_id IS NULL")
 
     rows = [dict(r) for r in conn.execute("\n".join(sql), params)]
 
@@ -240,6 +258,7 @@ def chronology(conn: sqlite3.Connection, *, matter_id: int | None = None,
         entry = {
             "id": row["id"],
             "doc_uid": row["doc_uid"],
+            "title": row.get("title") or row["original_filename"],
             "date": date,
             "date_source": date_source,
             "extract": row.get("extract_line") or "(not yet extracted)",
@@ -259,11 +278,20 @@ def chronology(conn: sqlite3.Connection, *, matter_id: int | None = None,
             "sha256_short": row["sha256"][:12],
             "storage_path": row["storage_path"],
             "byte_size": row["byte_size"],
+            "ocr_used": bool(row.get("ocr_used")),
+            "text_method": row.get("text_method"),
         }
 
         if not include_duplicates and copies:
             continue
+        if keyword and keyword.lower() not in entry["extract"].lower():
+            continue
         (dated if date else undated).append(entry)
+
+    if has_date is True:
+        undated = []
+    elif has_date is False:
+        dated = []
 
     dated.sort(key=lambda e: (e["date"], e["doc_uid"]))
     undated.sort(key=lambda e: e["filename"].lower())
@@ -281,7 +309,42 @@ def chronology(conn: sqlite3.Connection, *, matter_id: int | None = None,
         "redundant_copies": sum(len(copies) for copies in copies_by_document.values()),
         "status_counts": counts,
         "unreviewed": counts.get("UNREVIEWED", 0),
-        "filters": {"matter_id": matter_id, "folder": folder, "status": status},
+        "filters": {"matter_id": matter_id, "folder": folder, "status": status,
+                    "verification": verification, "ocr": ocr, "has_date": has_date,
+                    "keyword": keyword, "no_matter": no_matter,
+                    "hide_copies": ("1" if not include_duplicates else "")},
+    }
+
+
+def overview_counts(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Record-wide counts for the triage inspector — never a filtered subset.
+
+    Every value here is a count with the same denominator (the whole document
+    set), so it can be checked against the record. No percentage, no rating.
+    """
+    total = conn.execute("SELECT COUNT(*) c FROM documents").fetchone()["c"]
+    no_date = conn.execute(
+        "SELECT COUNT(*) c FROM documents WHERE filed_date IS NULL AND document_date IS NULL"
+    ).fetchone()["c"]
+    no_matter = conn.execute(
+        "SELECT COUNT(*) c FROM documents WHERE matter_id IS NULL"
+    ).fetchone()["c"]
+    duplicate_groups = conn.execute(
+        "SELECT COUNT(DISTINCT document_id) c FROM document_copies WHERE still_present=1"
+    ).fetchone()["c"]
+    redundant_copies = conn.execute(
+        "SELECT COUNT(*) c FROM document_copies WHERE still_present=1"
+    ).fetchone()["c"]
+    extraction_failed = conn.execute(
+        "SELECT COUNT(*) c FROM documents WHERE extraction_error IS NOT NULL"
+    ).fetchone()["c"]
+    return {
+        "total": total,
+        "no_date": no_date,
+        "no_matter": no_matter,
+        "duplicate_groups": duplicate_groups,
+        "redundant_copies": redundant_copies,
+        "extraction_failed": extraction_failed,
     }
 
 
@@ -312,6 +375,39 @@ def set_status(conn: sqlite3.Connection, document_id: int, status: str, *,
         "document_id": document_id, "doc_uid": row["doc_uid"], "triage_status": status,
         "note": ("Recorded. The document remains in the record and stays searchable. "
                  "Nothing was moved or deleted."),
+    }
+
+
+def set_status_bulk(conn: sqlite3.Connection, document_ids: list[int], status: str, *,
+                    reviewer: str = "jacob", note: str | None = None) -> dict[str, Any]:
+    """Apply one triage decision to many documents.
+
+    Each document is written through :func:`set_status`, so a bulk decision is
+    audit-logged exactly the way a single-document decision is — one entry per
+    document, not one summary entry standing in for all of them. A status
+    rejected up front stops the whole batch before anything is written; a
+    document id that turns out not to exist is skipped and reported, so one
+    bad id in a batch does not silently swallow the rest.
+    """
+    status = status.upper()
+    if status not in TRIAGE_STATUSES:
+        raise ValueError(f"{status!r} is not a triage status. "
+                         f"Allowed: {', '.join(TRIAGE_STATUSES)}")
+
+    updated: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for document_id in document_ids:
+        try:
+            updated.append(set_status(conn, document_id, status, reviewer=reviewer, note=note))
+        except ValueError as exc:
+            errors.append({"document_id": document_id, "error": str(exc)})
+
+    return {
+        "status": status,
+        "requested": len(document_ids),
+        "updated_count": len(updated),
+        "updated": updated,
+        "errors": errors,
     }
 
 

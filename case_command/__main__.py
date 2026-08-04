@@ -298,6 +298,74 @@ def cmd_offline(args) -> int:
     return 0
 
 
+def cmd_event(args) -> int:
+    """Add an event to the timeline, or attach proof to one.
+
+    The command mirrors the rule the module enforces: an event goes in without
+    proof, and proof is a separate deliberate act. Nothing here can mark a fact
+    verified.
+    """
+    from . import chronology
+
+    config = _config(args)
+    conn = open_database(config)
+    try:
+        if args.action == "add":
+            event = chronology.add_event(
+                conn, title=args.title or "", event_date=args.date,
+                matter_id=args.matter_id, event_type=args.type,
+                legal_significance=args.significance,
+                date_precision=args.precision, recalled=args.recalled,
+                notes=args.notes, actor=args.actor)
+            if args.json:
+                _print(event)
+            else:
+                print(f"CC-EVENT-{event['id']:06d}  {event['title']}")
+                print(f"  {event['event_date'] or 'no date'} "
+                      f"({event['date_precision'].lower()})  "
+                      f"{event['verification_status']}")
+                print(f"  {event['proof']['headline']}")
+                print("  Attach proof with: case-command event proof "
+                      f"--event-id {event['id']} --proof-type ...")
+
+        elif args.action == "proof":
+            event = chronology.attach_proof(
+                conn, args.event_id, proof_type=args.proof_type,
+                document_id=args.document_id, locator=args.locator,
+                asserted_by=args.asserted_by, detail=args.detail,
+                actor=args.actor)
+            if args.json:
+                _print(event)
+            else:
+                print(f"{event['title']}")
+                print(f"  {event['verification_status']}  —  {event['proof']['headline']}")
+                for proof in event["proofs"]:
+                    where = proof["locator"] or proof["asserted_by"] or ""
+                    gap = proof["recorded_after_days"]
+                    tail = f"  (recorded {gap}d after)" if gap else ""
+                    print(f"    {proof['proof_type']:<18} {where}{tail}")
+                print(f"  {event['proof']['detail']}")
+
+        elif args.action == "unproved":
+            report = chronology.unproved(conn, args.matter_id)
+            if args.json:
+                _print(report)
+            else:
+                print(report["label"])
+                print(f"  {report['testimonial_only']} rest on an account, "
+                      f"{report['unproved']} have nothing attached")
+                for item in report["unproved_events"]:
+                    print(f"    {item['event_date'] or '(no date)':<12} {item['title'][:60]}")
+                print(f"\n  {report['note']}")
+
+    except chronology.ProofError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_conform(args) -> int:
     """Drive a running server through every rule a sync client has to obey.
 
@@ -577,6 +645,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_device)
+
+    p = sub.add_parser("event", help="add timeline events and the proof behind them")
+    p.add_argument("action", choices=["add", "proof", "unproved"], nargs="?",
+                   default="unproved")
+    p.add_argument("--title", help="what happened, in your own words")
+    p.add_argument("--date", help="YYYY-MM-DD; omit only with --precision UNKNOWN")
+    p.add_argument("--precision", default="EXACT",
+                   choices=["EXACT", "APPROXIMATE", "MONTH_ONLY", "YEAR_ONLY", "UNKNOWN"])
+    p.add_argument("--matter-id", type=int, dest="matter_id")
+    p.add_argument("--type", help="OUTAGE, CALL, NOTICE, ...")
+    p.add_argument("--significance", help="why it matters")
+    p.add_argument("--recalled", action="store_true",
+                   help="you are recalling this rather than reading it")
+    p.add_argument("--notes")
+    p.add_argument("--event-id", type=int, dest="event_id")
+    p.add_argument("--proof-type", dest="proof_type",
+                   choices=["DOCUMENT", "PHOTO", "RECORDING", "THIRD_PARTY_RECORD",
+                            "WITNESS", "RECOLLECTION", "NONE"])
+    p.add_argument("--document-id", type=int, dest="document_id")
+    p.add_argument("--locator", help="page, paragraph, or timestamp — required for DOCUMENT")
+    p.add_argument("--asserted-by", dest="asserted_by",
+                   help="who says so — required for WITNESS and RECOLLECTION")
+    p.add_argument("--detail", help="what the proof shows; quote or close paraphrase")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_event)
 
     p = sub.add_parser("conform", help="check a client against the sync protocol rules")
     p.add_argument("--server", default="http://127.0.0.1:8787",

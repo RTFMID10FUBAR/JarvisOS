@@ -15,8 +15,9 @@ import unittest
 from pathlib import Path
 
 from .. import (
-    access, api, atlas, audit, backup, checks, client, fleet, health,
-    migrate_tree, offline, packets, preservation, triage, views, watcher,
+    access, api, atlas, audit, backup, checks, chronology, client, filing,
+    fleet, health, migrate_tree, offline, packets, preservation, triage,
+    views, watcher,
 )
 from ..classify import classify_text
 from ..config import (
@@ -1061,6 +1062,160 @@ class TestTriage(CaseCommandTest):
 
 
 # ===========================================================================
+# Document Center (the /triage screen and its bulk endpoint)
+# ===========================================================================
+class TestDocumentCenter(CaseCommandTest):
+    """The Document Center screen: chronology(), the bulk decision endpoint,
+    and the page they render — never a score, never a generated description.
+    """
+
+    def _start_server(self):
+        """Spin up the real handler on an ephemeral port, in a thread."""
+        import threading
+        from http.server import ThreadingHTTPServer
+        from ..web.server import CaseCommandHandler, _jinja_env
+
+        handler = type("BoundHandler", (CaseCommandHandler,),
+                       {"config": self.config, "env": _jinja_env()})
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(thread.join, timeout=5)
+        return httpd.server_address[1]
+
+    def test_bulk_endpoint_actually_changes_status_and_is_audited(self):
+        """POST /triage/bulk writes through triage.set_status for each document,
+        exactly the way the single-document form does — one audit entry per
+        document, not a single summary entry standing in for the whole batch.
+        """
+        import urllib.request
+        from urllib.parse import urlencode
+
+        first = ingest_path(self.config, self.conn, self.paths["draft"])
+        second = ingest_path(self.config, self.conn, self.paths["hardship"])
+        self.conn.commit()
+        port = self._start_server()
+
+        body = urlencode([
+            ("document_id", str(first.document_id)),
+            ("document_id", str(second.document_id)),
+            ("status", "IRRELEVANT"),
+            ("reviewer", "bulk-tester"),
+            ("note", "swept in a bulk pass"),
+            ("redirect_to", "/triage?status=IRRELEVANT"),
+        ]).encode("utf-8")
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/triage/bulk", data=body, method="POST")
+        response = urllib.request.urlopen(request)
+        self.assertEqual(response.status, 200)   # urllib follows the 303 redirect
+        self.assertIn("/triage", response.geturl())
+
+        rows = self.conn.execute(
+            "SELECT id, triage_status, triage_note, triage_by FROM documents WHERE id IN (?,?)",
+            (first.document_id, second.document_id)).fetchall()
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertEqual(row["triage_status"], "IRRELEVANT")
+            self.assertEqual(row["triage_by"], "bulk-tester")
+            self.assertEqual(row["triage_note"], "swept in a bulk pass")
+
+        # One audit entry per document — the same trail a single decision leaves.
+        entries = self.conn.execute(
+            "SELECT target_id FROM audit_log WHERE action='TRIAGE_DECISION' "
+            "AND actor='bulk-tester' ORDER BY id").fetchall()
+        self.assertEqual({e["target_id"] for e in entries},
+                         {first.document_id, second.document_id})
+
+    def test_bulk_endpoint_rejects_an_unknown_status_and_writes_nothing(self):
+        result = ingest_path(self.config, self.conn, self.paths["draft"])
+        self.conn.commit()
+        with self.assertRaises(ValueError):
+            triage.set_status_bulk(self.conn, [result.document_id], "DELETE_FOREVER")
+        row = self.conn.execute("SELECT triage_status FROM documents WHERE id=?",
+                                (result.document_id,)).fetchone()
+        self.assertEqual(row["triage_status"], "UNREVIEWED")
+
+    def test_bulk_endpoint_reports_a_missing_document_without_losing_the_rest(self):
+        result = ingest_path(self.config, self.conn, self.paths["draft"])
+        outcome = triage.set_status_bulk(
+            self.conn, [result.document_id, 999999], "KEEP", reviewer="test")
+        self.assertEqual(outcome["updated_count"], 1)
+        self.assertEqual(len(outcome["errors"]), 1)
+        self.assertEqual(outcome["errors"][0]["document_id"], 999999)
+        row = self.conn.execute("SELECT triage_status FROM documents WHERE id=?",
+                                (result.document_id,)).fetchone()
+        self.assertEqual(row["triage_status"], "KEEP")
+
+    def test_extract_column_is_always_the_verbatim_extract_never_generated(self):
+        """The chronology entry the page renders as 'what it is' must be exactly
+        documents.extract_line — the same string extract_line() lifted verbatim
+        out of the source text, never a paraphrase written after the fact.
+        """
+        self.ingest_all()
+        triage.backfill_extracts(self.conn)
+        report = triage.chronology(self.conn)
+
+        checked = 0
+        for entry in report["dated"] + report["undated"]:
+            row = self.conn.execute("SELECT extract_line, text_path FROM documents WHERE id=?",
+                                    (entry["id"],)).fetchone()
+            expected = row["extract_line"] or "(not yet extracted)"
+            self.assertEqual(entry["extract"], expected,
+                             "the page's extract column must equal documents.extract_line verbatim")
+            if row["text_path"] and Path(row["text_path"]).exists() and entry["extract"] not in (
+                    "(not yet extracted)", "(no text could be extracted)"):
+                source = Path(row["text_path"]).read_text(encoding="utf-8", errors="replace")
+                self.assertIn(entry["extract"], source,
+                             f"extract for {entry['doc_uid']} does not appear verbatim in its source text")
+                checked += 1
+        self.assertGreater(checked, 0, "the fixture set must exercise at least one verbatim extract")
+
+    def test_document_center_page_carries_no_percentage_in_any_data_field(self):
+        """No score, no confidence, no health rating — counts with a
+        denominator only. If a '%' shows up in the rendered page outside of a
+        CSS length (e.g. 'width: 58vh' has none), something regressed into a
+        score.
+        """
+        import re
+
+        self.ingest_all()
+        port = self._start_server()
+        import urllib.request
+
+        html = urllib.request.urlopen(f"http://127.0.0.1:{port}/triage").read().decode("utf-8")
+        self.assertIn("Document Center", html)
+
+        # Strip inline style attributes and the <style> block's own CSS values
+        # (positioning percentages such as top:0 or grid widths are layout, not
+        # data) before checking the rendered content for a stray percentage.
+        stripped = re.sub(r'style="[^"]*"', "", html)
+        stripped = re.sub(r"<style>.*?</style>", "", stripped, flags=re.DOTALL)
+        self.assertNotIn("%", stripped,
+                         "a '%' appears in the Document Center's rendered content")
+
+    def test_document_center_bulk_form_never_deletes_or_moves_a_document(self):
+        """A triage decision changes status only; the file stays exactly where
+        it was and the document row is never removed."""
+        result = ingest_path(self.config, self.conn, self.paths["draft"])
+        self.conn.commit()
+        storage_path = self.conn.execute(
+            "SELECT storage_path FROM documents WHERE id=?",
+            (result.document_id,)).fetchone()["storage_path"]
+        before_path = Path(storage_path)
+        before_bytes = before_path.read_bytes()
+
+        triage.set_status_bulk(self.conn, [result.document_id], "ARCHIVE_PROPOSED",
+                               reviewer="test")
+
+        self.assertTrue(before_path.exists())
+        self.assertEqual(before_path.read_bytes(), before_bytes)
+        count = self.conn.execute("SELECT COUNT(*) n FROM documents").fetchone()["n"]
+        self.assertEqual(count, 1)
+
+
+# ===========================================================================
 # Access barriers
 # ===========================================================================
 class TestAccessBarriers(CaseCommandTest):
@@ -1667,6 +1822,151 @@ class TestAtlasGraph(CaseCommandTest):
         g = atlas.graph(self.conn, self.matter("kanawha-rule-60")["id"])
         if g["empty"]:
             self.assertIn("record", g["empty_reason"].lower())
+
+
+class TestChronology(CaseCommandTest):
+    """Adding events by hand, and what is allowed to count as proof.
+
+    The rule under test throughout: a thing you recall is not proof of the
+    thing. It is a record that you recall it, made on a date. If those two ever
+    render alike, the timeline is lying by omission at the exact moment it gets
+    read out loud.
+    """
+
+    def an_event(self, **kw):
+        kw.setdefault("title", "Power disconnected at the house")
+        kw.setdefault("event_date", "2025-09-14")
+        kw.setdefault("matter_id", self.matter("psc-26-0315")["id"])
+        return chronology.add_event(self.conn, **kw)
+
+    def a_document(self):
+        self.ingest_all()
+        return dict(self.conn.execute("SELECT * FROM documents LIMIT 1").fetchone())
+
+    def test_a_new_event_starts_with_no_source(self):
+        event = self.an_event()
+        self.assertEqual(event["verification_status"], "MISSING_SOURCE")
+        self.assertEqual(event["origin"], "MANUAL")
+        self.assertEqual(event["proof"]["state"], "NONE")
+        self.assertIn("record", event["proof"]["detail"].lower())
+
+    def test_a_recollection_never_verifies_an_event(self):
+        event = self.an_event()
+        event = chronology.attach_proof(
+            self.conn, event["id"], proof_type="RECOLLECTION",
+            asserted_by="Jacob Kerr", detail="I remember the truck.")
+        self.assertEqual(event["verification_status"], "UNKNOWN")
+        self.assertEqual(event["proof"]["state"], "TESTIMONIAL")
+        self.assertIn("not documented", event["proof"]["headline"])
+
+    def test_documentary_proof_without_a_locator_is_refused(self):
+        """'It is in the record somewhere' cannot be handed to a tribunal."""
+        doc = self.a_document()
+        event = self.an_event()
+        with self.assertRaises(chronology.ProofError) as ctx:
+            chronology.attach_proof(self.conn, event["id"],
+                                    proof_type="DOCUMENT", document_id=doc["id"])
+        self.assertIn("locator", str(ctx.exception))
+
+    def test_documentary_proof_stops_at_partially_verified(self):
+        """Having a source is necessary for verification, and not sufficient."""
+        doc = self.a_document()
+        event = self.an_event()
+        event = chronology.attach_proof(
+            self.conn, event["id"], proof_type="DOCUMENT",
+            document_id=doc["id"], locator="p. 2 para 4")
+        self.assertEqual(event["verification_status"], "PARTIALLY_VERIFIED")
+        self.assertNotIn("VERIFIED_PRIMARY", event["verification_status"])
+        self.assertIn(doc["doc_uid"], event["proof"]["headline"])
+
+    def test_a_deliberate_status_is_not_overwritten(self):
+        doc = self.a_document()
+        event = self.an_event()
+        self.conn.execute("UPDATE events SET verification_status='DISPUTED' WHERE id=?",
+                          (event["id"],))
+        self.conn.commit()
+        event = chronology.attach_proof(
+            self.conn, event["id"], proof_type="DOCUMENT",
+            document_id=doc["id"], locator="p. 1")
+        self.assertEqual(event["verification_status"], "DISPUTED")
+
+    def test_testimonial_proof_must_name_who_says_so(self):
+        event = self.an_event()
+        for kind in ("RECOLLECTION", "WITNESS"):
+            with self.assertRaises(chronology.ProofError):
+                chronology.attach_proof(self.conn, event["id"], proof_type=kind)
+
+    def test_an_undated_event_must_say_the_date_is_unknown(self):
+        with self.assertRaises(chronology.ProofError) as ctx:
+            chronology.add_event(self.conn, title="Something I cannot date",
+                                 event_date=None)
+        self.assertIn("UNKNOWN", str(ctx.exception))
+        event = chronology.add_event(self.conn, title="Something I cannot date",
+                                     event_date=None, date_precision="UNKNOWN")
+        self.assertEqual(event["date_precision"], "UNKNOWN")
+
+    def test_an_undated_event_is_listed_not_hidden(self):
+        """Dropping an event nobody can date is the omission this system prevents."""
+        matter = self.matter("psc-26-0315")["id"]
+        self.an_event()
+        chronology.add_event(self.conn, title="Undated but real", event_date=None,
+                             date_precision="UNKNOWN", matter_id=matter)
+        titles = [e["title"] for e in chronology.timeline(self.conn, matter_id=matter)]
+        self.assertIn("Undated but real", titles)
+
+    def test_the_recording_gap_is_reported(self):
+        event = self.an_event(event_date="2020-01-01")
+        event = chronology.attach_proof(
+            self.conn, event["id"], proof_type="RECOLLECTION",
+            asserted_by="Jacob Kerr")
+        gap = event["proofs"][0]["recorded_after_days"]
+        self.assertIsNotNone(gap)
+        self.assertGreater(gap, 365, "a years-old memory should show the gap")
+
+    def test_proof_cannot_be_deleted(self):
+        event = self.an_event()
+        chronology.attach_proof(self.conn, event["id"], proof_type="RECOLLECTION",
+                                asserted_by="Jacob Kerr")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute("DELETE FROM event_proof WHERE event_id=?", (event["id"],))
+
+    def test_proof_index_matches_per_event_lookup(self):
+        doc = self.a_document()
+        first = self.an_event()
+        second = self.an_event(title="A second thing", event_date="2025-10-02")
+        chronology.attach_proof(self.conn, first["id"], proof_type="DOCUMENT",
+                                document_id=doc["id"], locator="p. 1")
+        chronology.attach_proof(self.conn, second["id"], proof_type="RECOLLECTION",
+                                asserted_by="Jacob Kerr")
+        index = chronology.proof_index(self.conn, [first["id"], second["id"]])
+        self.assertEqual(index[first["id"]]["summary"]["state"], "DOCUMENTED")
+        self.assertEqual(index[second["id"]]["summary"]["state"], "TESTIMONIAL")
+        for event_id in (first["id"], second["id"]):
+            self.assertEqual(
+                [p["proof_type"] for p in index[event_id]["proofs"]],
+                [p["proof_type"] for p in chronology.proof_for(self.conn, event_id)])
+
+    def test_coverage_is_a_count_never_a_score(self):
+        self.an_event()
+        report = chronology.unproved(self.conn)
+        self.assertIn("of", report["label"])
+        blob = json.dumps(report).lower()
+        for banned in ("%", "score", "confidence", "likelihood", "probability"):
+            if banned == "%":
+                self.assertNotIn("%", report["label"])
+            else:
+                self.assertNotIn(banned, report["label"].lower())
+        self.assertIn("not a score", report["note"])
+
+    def test_nothing_here_characterises_the_case(self):
+        event = self.an_event()
+        event = chronology.attach_proof(self.conn, event["id"],
+                                        proof_type="RECOLLECTION",
+                                        asserted_by="Jacob Kerr")
+        blob = json.dumps(event["proof"]).lower()
+        for word in ("strong", "weak", "credible", "convincing", "likely",
+                     "probably", "compelling"):
+            self.assertNotIn(word, blob, f"proof summary characterised the case: {word!r}")
 
 
 if __name__ == "__main__":

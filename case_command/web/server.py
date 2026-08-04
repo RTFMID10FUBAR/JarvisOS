@@ -13,14 +13,14 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 from .. import (
-    __version__, access, api, atlas, audit, fleet, health, offline, triage,
-    views,
+    __version__, access, api, atlas, audit, chronology, filing, fleet, health,
+    offline, triage, views,
 )
 from ..config import Config, LITIGATION_FOLDERS, load_config
-from ..db import open_database, utcnow
+from ..db import VERIFICATION_STATUSES, open_database, utcnow
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -138,6 +138,7 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
             "/m/doc": self.m_doc,
             "/api/offline/bundle": self.api_offline_bundle,
             "/atlas": self.view_atlas,
+            "/filing": self.view_filing,
             "/access": self.view_access,
             "/triage": self.view_triage,
             "/triage.csv": self.export_triage_csv,
@@ -193,8 +194,14 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
                 return self.post_unpin(form)
             if parsed.path == "/m/pack":
                 return self.post_pack(form)
+            if parsed.path == "/timeline/add":
+                return self.post_timeline_add(form)
+            if parsed.path == "/timeline/proof":
+                return self.post_timeline_proof(form)
             if parsed.path == "/triage/decide":
                 return self.post_triage_decide(form)
+            if parsed.path == "/triage/bulk":
+                return self.post_triage_bulk(form)
             if parsed.path == "/approvals/resolve":
                 return self.post_resolve_approval(form)
             if parsed.path == "/fleet/decide":
@@ -237,28 +244,56 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
+    # Query params that select the Document Center's current view. Carried
+    # forward through redirects (e.g. after a bulk decision) so a reviewer
+    # working a filtered slice is not dropped back to the unfiltered list.
+    _TRIAGE_FILTER_KEYS = (
+        "matter_id", "folder", "status", "verification", "ocr",
+        "has_date", "keyword", "no_matter", "hide_copies",
+    )
+
     def _triage_report(self, params: dict[str, list[str]]):
         conn = self._conn()
         try:
             triage.backfill_extracts(conn)
+            has_date_raw = self._str(params, "has_date")
+            ocr_raw = self._str(params, "ocr")
             return conn, triage.chronology(
                 conn,
                 matter_id=self._int(params, "matter_id"),
                 folder=self._str(params, "folder"),
                 status=self._str(params, "status"),
                 include_duplicates=self._str(params, "hide_copies") != "1",
+                verification=self._str(params, "verification"),
+                ocr=None if ocr_raw is None else ocr_raw == "1",
+                has_date=None if has_date_raw is None else has_date_raw == "1",
+                keyword=self._str(params, "keyword"),
+                no_matter=self._str(params, "no_matter") == "1",
             )
         except BaseException:
             conn.close()
             raise
 
+    def _triage_query_string(self, params: dict[str, list[str]]) -> str:
+        """Rebuild a query string from only the recognised filter params."""
+        kept = {k: v[0] for k, v in params.items()
+                if k in self._TRIAGE_FILTER_KEYS and v and v[0]}
+        return urlencode(kept)
+
     def view_triage(self, params: dict[str, list[str]]) -> None:
         conn, data = self._triage_report(params)
         try:
-            self._render("triage.html", conn, nav_active="triage", data=data,
-                         matters=views.list_matters(conn),
-                         folders=LITIGATION_FOLDERS,
-                         statuses=triage.TRIAGE_STATUSES)
+            qs = self._triage_query_string(params)
+            self._render(
+                "triage.html", conn, nav_active="triage", data=data,
+                matters=views.list_matters(conn),
+                folders=LITIGATION_FOLDERS,
+                statuses=triage.TRIAGE_STATUSES,
+                verification_statuses=VERIFICATION_STATUSES,
+                overview=triage.overview_counts(conn),
+                duplicate_queue=triage.copy_locations(conn),
+                redirect_to=("/triage" + (f"?{qs}" if qs else "")),
+            )
         finally:
             conn.close()
 
@@ -286,6 +321,33 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
         try:
             triage.set_status(conn, document_id, status, reviewer=reviewer, note=note)
             self._redirect("/triage")
+        except ValueError as exc:
+            self._send(f"<h1>400</h1><p>{exc}</p>".encode("utf-8"), 400)
+        finally:
+            conn.close()
+
+    def post_triage_bulk(self, form: dict[str, list[str]]) -> None:
+        """Apply one triage decision to every checked document at once.
+
+        Writes through :func:`triage.set_status_bulk`, which calls the same
+        `triage.set_status` used by the single-document form — so a bulk
+        decision lands in the database and the audit log exactly the way an
+        individual one does, one entry per document.
+        """
+        raw_ids = form.get("document_id") or []
+        document_ids = [int(v) for v in raw_ids if v.strip().isdigit()]
+        status = (form.get("status") or [""])[0]
+        reviewer = (form.get("reviewer") or ["jacob"])[0]
+        note = (form.get("note") or [""])[0] or None
+        redirect_to = (form.get("redirect_to") or [""])[0]
+        if not redirect_to.startswith("/triage"):
+            redirect_to = "/triage"
+
+        conn = self._conn()
+        try:
+            if document_ids:
+                triage.set_status_bulk(conn, document_ids, status, reviewer=reviewer, note=note)
+            self._redirect(redirect_to)
         except ValueError as exc:
             self._send(f"<h1>400</h1><p>{exc}</p>".encode("utf-8"), 400)
         finally:
@@ -572,6 +634,19 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
+    def view_filing(self, params: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            matters = views.list_matters(conn)
+            matter_id = self._int(params, "matter_id")
+            if matter_id is None and matters:
+                matter_id = matters[0]["id"]
+            data = filing.build_filing_studio(conn, matter_id) if matter_id else {}
+            self._render("filing.html", conn, nav_active="filing", data=data,
+                         matters=matters)
+        finally:
+            conn.close()
+
     def view_access(self, params: dict[str, list[str]]) -> None:
         conn = self._conn()
         try:
@@ -615,8 +690,67 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
                 disputed=None if disputed_raw is None else disputed_raw == "1",
                 significance=self._str(params, "significance"),
             )
-            self._render("timeline.html", conn, nav_active="timeline", data=data,
-                         matters=views.list_matters(conn))
+            matter_id = self._int(params, "matter_id")
+            self._render(
+                "timeline.html", conn, nav_active="timeline", data=data,
+                matters=views.list_matters(conn),
+                # Proof travels with the row. A timeline where "what proves
+                # this" is one click away is a timeline nobody checks.
+                proof=chronology.proof_index(
+                    conn, [int(e["id"]) for e in data["events"]]),
+                proof_coverage=chronology.unproved(conn, matter_id),
+                proof_labels=sorted(chronology.PROOF_LABELS.items()),
+                date_precisions=chronology.DATE_PRECISIONS,
+                documents=chronology.documents_for_picker(conn, matter_id),
+                back=self.path,
+                error=self._str(params, "error"))
+        finally:
+            conn.close()
+
+    def post_timeline_add(self, form: dict[str, list[str]]) -> None:
+        """Add an event a person is entering by hand."""
+        conn = self._conn()
+        try:
+            def field(name: str) -> str | None:
+                return (form.get(name) or [""])[0].strip() or None
+
+            matter = field("matter_id")
+            chronology.add_event(
+                conn,
+                title=field("title") or "",
+                event_date=field("event_date"),
+                matter_id=int(matter) if matter else None,
+                event_type=field("event_type"),
+                legal_significance=field("legal_significance"),
+                date_precision=field("date_precision") or "EXACT",
+                recalled=bool(form.get("recalled")),
+                actor="jacob")
+            self._redirect(field("back") or "/timeline")
+        except chronology.ProofError as exc:
+            self._redirect(f"/timeline?error={quote(str(exc))}")
+        finally:
+            conn.close()
+
+    def post_timeline_proof(self, form: dict[str, list[str]]) -> None:
+        """Attach one piece of proof to an event."""
+        conn = self._conn()
+        try:
+            def field(name: str) -> str | None:
+                return (form.get(name) or [""])[0].strip() or None
+
+            document = field("document_id")
+            chronology.attach_proof(
+                conn,
+                int(field("event_id") or 0),
+                proof_type=field("proof_type") or "NONE",
+                document_id=int(document) if document else None,
+                locator=field("locator"),
+                asserted_by=field("asserted_by"),
+                detail=field("detail"),
+                actor="jacob")
+            self._redirect(field("back") or "/timeline")
+        except (chronology.ProofError, ValueError) as exc:
+            self._redirect(f"/timeline?error={quote(str(exc))}")
         finally:
             conn.close()
 

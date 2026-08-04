@@ -65,9 +65,14 @@ not apply to this codebase.
 | 36 | Filter bar | **MET** | Matter, date range, actor, filing type, boundary, verification, disputed, significance |
 | 37 | Date-type distinction visible | **MET** in data, **GAP** in visual | Every row carries its `date_source`; not visually encoded |
 | 38 | Boundary marked on the axis | **GAP** | The 2025-09-03 boundary is in the data and named in rows, but not drawn as a line |
-| 39 | Event inspector | **GAP** | No detail panel |
+| 39 | Event inspector | **MET** | "What counts as proof" panel, pinned |
 | 40 | Contradiction panel adjacent | **GAP** | Contradictions live on Command only |
 | 41 | Source confidence per event | **MET** | `verification` column plus the source locator (`CC-DOC-000001 char 404`) |
+| 41a | **Every item states what proves it** | **MET** | New `event_proof` table: one row per piece of proof, typed, each with its own locator. A documented event and a remembered one are visually distinct — solid green border vs dashed amber |
+| 41b | **Add an event by hand, including a recollection** | **MET** | `/timeline/add` and `/timeline/proof`; `case-command event add\|proof\|unproved` |
+| 41c | **A recollection never counts as proof of the fact** | **MET** | Caps the event at `UNKNOWN`; documentary proof caps at `PARTIALLY_VERIFIED`; `VERIFIED_PRIMARY` stays a person's decision |
+| 41d | **The gap between event and recording is shown** | **MET** | "recorded 306 days after" — arithmetic on two dates, reported, never scored |
+| 41e | Filing and order dates entered by hand | **N/A — not needed** | Read off the document's own signature block / dated line / service date, each carrying its cue |
 
 ## Document Center — `05_document_center_and_intake.png`
 

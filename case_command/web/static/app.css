@@ -473,3 +473,39 @@ footer.foot {
 .map-key .k-considers i { border-top-style: dashed; color: #35507a; }
 .map-key .k-blocks i    { color: #c9524d; }
 .map-key .k-preserves i { color: #4a9d6b; }
+
+/* ---------------------------------------------------------------------------
+   Timeline proof.
+
+   A documented event and a remembered one must never be mistaken for each
+   other at a glance. The left border does that work: solid green for something
+   in the record, dashed amber for somebody's account.
+   --------------------------------------------------------------------------- */
+.proof-cell { min-width: 260px; }
+.proof {
+  border-left: 3px solid #4a9d6b;
+  padding: .15rem 0 .15rem .5rem;
+  margin-bottom: .35rem;
+  font-size: .8rem;
+}
+.proof:last-child { margin-bottom: 0; }
+.proof.testimonial { border-left-style: dashed; border-left-color: #d9a441; }
+.proof .loc { color: var(--dim, #8a9ab2); margin-left: .35rem; font-size: .74rem; }
+.proof .sub { margin-top: .1rem; font-size: .74rem; }
+
+tr.row-recalled td { background: rgba(217, 164, 65, .035); }
+
+.row-add > summary {
+  cursor: pointer; list-style: none;
+  font-size: .72rem; color: var(--accent, #6ea8fe); white-space: nowrap;
+}
+.row-add > summary::-webkit-details-marker { display: none; }
+.row-add form {
+  display: grid; gap: .4rem; padding: .5rem;
+  border: 1px solid var(--line, #1e2a3d); border-radius: 8px;
+  margin-top: .35rem; min-width: 300px;
+}
+.row-add label { display: grid; gap: .15rem; font-size: .7rem; color: var(--dim, #8a9ab2); }
+.filters label.check { display: flex; flex-direction: row; align-items: center;
+                       gap: .4rem; white-space: nowrap; }
+.filters label.check input { width: auto; margin: 0; }
