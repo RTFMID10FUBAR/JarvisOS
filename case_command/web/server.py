@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from .. import __version__, audit, fleet, health, triage, views
+from .. import __version__, access, atlas, audit, fleet, health, triage, views
 from ..config import Config, LITIGATION_FOLDERS, load_config
 from ..db import open_database, utcnow
 
@@ -69,8 +69,25 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _render(self, template: str, **context: Any) -> None:
+    def _nav_counts(self, conn: sqlite3.Connection) -> dict[str, Any]:
+        """Badge counts for the rail. Cheap queries only."""
+        def n(sql: str) -> int:
+            try:
+                return int(conn.execute(sql).fetchone()[0])
+            except sqlite3.Error:
+                return 0
+
+        return {
+            "approvals": n("SELECT COUNT(*) FROM approvals WHERE state='OPEN'"),
+            "fleet": n("SELECT COUNT(*) FROM fleet_proposal_items WHERE decision='PENDING'"),
+            "unreviewed": n("SELECT COUNT(*) FROM documents WHERE triage_status='UNREVIEWED'"),
+        }
+
+    def _render(self, template: str, conn: sqlite3.Connection | None = None,
+                **context: Any) -> None:
         context.setdefault("nav_active", "")
+        if conn is not None and "nav_counts" not in context:
+            context["nav_counts"] = self._nav_counts(conn)
         html = self.env.get_template(template).render(**context)
         self._send(html.encode("utf-8"))
 
@@ -107,6 +124,8 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
 
         routes: dict[str, Callable[[dict[str, list[str]]], None]] = {
             "/": self.view_dashboard,
+            "/atlas": self.view_atlas,
+            "/access": self.view_access,
             "/triage": self.view_triage,
             "/triage.csv": self.export_triage_csv,
             "/matter": self.view_matter,
@@ -163,7 +182,7 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
     def view_dashboard(self, params: dict[str, list[str]]) -> None:
         conn = self._conn()
         try:
-            self._render("dashboard.html", nav_active="dashboard",
+            self._render("dashboard.html", conn, nav_active="dashboard",
                          data=views.dashboard(conn))
         finally:
             conn.close()
@@ -186,7 +205,7 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
     def view_triage(self, params: dict[str, list[str]]) -> None:
         conn, data = self._triage_report(params)
         try:
-            self._render("triage.html", nav_active="triage", data=data,
+            self._render("triage.html", conn, nav_active="triage", data=data,
                          matters=views.list_matters(conn),
                          folders=LITIGATION_FOLDERS,
                          statuses=triage.TRIAGE_STATUSES)
@@ -222,17 +241,44 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
+    def view_atlas(self, params: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            matters = views.list_matters(conn)
+            matter_id = self._int(params, "matter_id")
+            if matter_id is None and matters:
+                matter_id = matters[0]["id"]
+            data = atlas.build_atlas(conn, matter_id) if matter_id else {}
+            self._render("atlas.html", conn, nav_active="atlas", data=data,
+                         matters=matters,
+                         coverage=atlas.coverage(conn, matter_id) if matter_id else {})
+        finally:
+            conn.close()
+
+    def view_access(self, params: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            matter_id = self._int(params, "matter_id")
+            self._render("access.html", conn, nav_active="access",
+                         barriers=access.list_barriers(conn, matter_id),
+                         summary=access.summarize(conn, matter_id),
+                         barrier_types=access.BARRIER_TYPES,
+                         barrier_labels=access.BARRIER_LABELS,
+                         matters=views.list_matters(conn), matter_id=matter_id)
+        finally:
+            conn.close()
+
     def view_matter(self, params: dict[str, list[str]]) -> None:
         matter_id = self._int(params, "id")
         conn = self._conn()
         try:
             if matter_id is None:
-                return self._render("matters.html", nav_active="matters",
+                return self._render("matters.html", conn, nav_active="matters",
                                     matters=views.list_matters(conn))
             data = views.matter_view(conn, matter_id)
             if not data:
                 return self._send(b"<h1>404</h1><p>No such matter.</p>", 404)
-            self._render("matter.html", nav_active="matters", data=data)
+            self._render("matter.html", conn, nav_active="matters", data=data)
         finally:
             conn.close()
 
@@ -252,7 +298,7 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
                 disputed=None if disputed_raw is None else disputed_raw == "1",
                 significance=self._str(params, "significance"),
             )
-            self._render("timeline.html", nav_active="timeline", data=data,
+            self._render("timeline.html", conn, nav_active="timeline", data=data,
                          matters=views.list_matters(conn))
         finally:
             conn.close()
@@ -267,7 +313,7 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
                 right_id=self._int(params, "right"),
                 matter_id=self._int(params, "matter_id"),
             )
-            self._render("compare.html", nav_active="compare", data=data,
+            self._render("compare.html", conn, nav_active="compare", data=data,
                          matters=views.list_matters(conn))
         finally:
             conn.close()
@@ -275,7 +321,7 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
     def view_issues(self, params: dict[str, list[str]]) -> None:
         conn = self._conn()
         try:
-            self._render("issues.html", nav_active="issues",
+            self._render("issues.html", conn, nav_active="issues",
                          data=views.issue_matrix(conn, self._int(params, "matter_id")))
         finally:
             conn.close()
@@ -285,20 +331,20 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
         conn = self._conn()
         try:
             if matter_id is None:
-                return self._render("matters.html", nav_active="hearing",
+                return self._render("matters.html", conn, nav_active="hearing",
                                     matters=views.list_matters(conn),
                                     prompt="Choose a matter to enter hearing mode.")
             data = views.hearing_mode(conn, matter_id, self._str(params, "date"))
             if not data:
                 return self._send(b"<h1>404</h1><p>No such matter.</p>", 404)
-            self._render("hearing.html", nav_active="hearing", data=data)
+            self._render("hearing.html", conn, nav_active="hearing", data=data)
         finally:
             conn.close()
 
     def view_preservation(self, params: dict[str, list[str]]) -> None:
         conn = self._conn()
         try:
-            self._render("preservation.html", nav_active="preservation",
+            self._render("preservation.html", conn, nav_active="preservation",
                          data=views.preservation_view(conn, self._int(params, "matter_id")))
         finally:
             conn.close()
@@ -306,7 +352,7 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
     def view_approvals(self, params: dict[str, list[str]]) -> None:
         conn = self._conn()
         try:
-            self._render("approvals.html", nav_active="approvals",
+            self._render("approvals.html", conn, nav_active="approvals",
                          data=views.approvals_view(conn))
         finally:
             conn.close()
@@ -314,7 +360,7 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
     def view_fleet(self, params: dict[str, list[str]]) -> None:
         conn = self._conn()
         try:
-            self._render("fleet.html", nav_active="fleet", data=views.fleet_view(conn))
+            self._render("fleet.html", conn, nav_active="fleet", data=views.fleet_view(conn))
         finally:
             conn.close()
 
@@ -325,14 +371,14 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
             data = views.document_view(conn, document_id) if document_id else {}
             if not data:
                 return self._send(b"<h1>404</h1><p>No such document.</p>", 404)
-            self._render("document.html", nav_active="", data=data)
+            self._render("document.html", conn, nav_active="", data=data)
         finally:
             conn.close()
 
     def view_health(self, params: dict[str, list[str]]) -> None:
         conn = self._conn()
         try:
-            self._render("health.html", nav_active="health",
+            self._render("health.html", conn, nav_active="health",
                          report=health.run_health_checks(self.config, conn))
         finally:
             conn.close()

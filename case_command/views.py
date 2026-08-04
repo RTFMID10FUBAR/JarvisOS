@@ -146,6 +146,7 @@ def dashboard(conn: sqlite3.Connection) -> dict[str, Any]:
             GROUP BY p.id ORDER BY p.created_at DESC
         """),
         "access_barriers": _access_barrier_summary(conn),
+        "coverage": _coverage(conn),
         "todays_actions": _todays_actions(conn, deadlines),
         "matters": list_matters(conn),
         "counts": {
@@ -157,6 +158,13 @@ def dashboard(conn: sqlite3.Connection) -> dict[str, Any]:
             ).fetchone()["n"],
         },
     }
+
+
+def _coverage(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Record coverage as counts. Never a single "health" percentage."""
+    from . import atlas
+
+    return atlas.coverage(conn)
 
 
 def _access_barrier_summary(conn: sqlite3.Connection) -> dict[str, Any]:

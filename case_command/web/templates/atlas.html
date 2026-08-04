@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Path Atlas{% endblock %}
+{% block heading %}Path Atlas — what can happen now{% endblock %}
+{% block content %}
+
+<form class="filters" method="get" action="/atlas">
+  <label>Matter
+    <select name="matter_id" onchange="this.form.submit()">
+      {% for m in matters %}
+      <option value="{{ m.id }}" {{ 'selected' if data.matter and data.matter.id == m.id }}>{{ m.title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="primary" type="submit">Show</button>
+</form>
+
+{% if not data %}
+  <div class="banner">Choose a matter.</div>
+{% else %}
+
+<div class="banner warn">{{ data.disclaimer }}</div>
+
+<div class="atlas">
+  <div class="atlas-col can">
+    <header><b>Can be prepared now</b>
+      <span class="spacer"></span><span class="chip ok">{{ data.counts.available }}</span></header>
+    <div class="atlas-body">
+      {% for p in data.available %}
+      <div class="step">
+        <b>{{ p.label }}</b>
+        <div class="sub">{{ p.what_it_does }}</div>
+        {% if p.urgency_date %}
+          <div style="margin-top:.3rem">
+            <span class="chip {{ 'danger' if p.days_left is not none and p.days_left < 7 else 'warn' }}">
+              {{ p.urgency_date }}{% if p.days_left is not none %} · {{ p.days_left }}d{% endif %}</span>
+          </div>
+        {% endif %}
+        {% if p.authority_to_confirm %}<div class="sub">⚑ {{ p.authority_to_confirm }}</div>{% endif %}
+      </div>
+      {% else %}
+      <p class="empty">Nothing is currently unblocked.</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="atlas-col blocked">
+    <header><b>Blocked</b>
+      <span class="spacer"></span><span class="chip warn">{{ data.counts.blocked }}</span></header>
+    <div class="atlas-body">
+      {% for p in data.blocked %}
+      <div class="step">
+        <b>{{ p.label }}</b>
+        <div class="sub">{{ p.what_it_does }}</div>
+        {% for b in p.blockers %}<div class="sub missing">✕ {{ b }}</div>{% endfor %}
+      </div>
+      {% else %}
+      <p class="empty">Nothing is blocked by a missing record fact.</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="atlas-col preserves">
+    <header><b>Preserves an issue</b>
+      <span class="spacer"></span><span class="chip info">{{ data.counts.preserving }}</span></header>
+    <div class="atlas-body">
+      {% for p in data.preserving %}
+      <div class="step">
+        <b>{{ p.label }}</b>
+        <div class="sub">Preserves: {{ p.preserves }}</div>
+      </div>
+      {% else %}
+      <p class="empty">No path is currently carrying a preservation function.</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="atlas-col next">
+    <header><b>Suggested order</b>
+      <span class="spacer"></span><span class="sub">by deadline only</span></header>
+    <div class="atlas-body">
+      {% for p in data.suggested_order %}
+      <div class="step ordered">
+        <span class="n">{{ loop.index }}</span>
+        <span>
+          <b>{{ p.label }}</b>
+          <div class="sub">
+            {% if p.urgency_date %}{{ p.urgency_date }}{% if p.days_left is not none %} · {{ p.days_left }} day(s){% endif %}
+            {% else %}no date in the record{% endif %}</div>
+        </span>
+      </div>
+      {% else %}
+      <p class="empty">Nothing to sequence.</p>
+      {% endfor %}
+      <p class="sub">Ordered by deadline pressure alone. This is a sort of the record,
+        not a strategy — and not a prediction of how anything will be decided.</p>
+    </div>
+  </div>
+</div>
+
+<div class="grid two" style="margin-top:.9rem">
+  <div class="panel">
+    <div class="panel-head"><h2>Record coverage — {{ data.matter.title }}</h2></div>
+    <div class="panel-body">
+      <div class="coverage">
+        <div class="coverage-top"><span>{{ coverage.label }}</span>
+          <b>{{ coverage.issues_sourced }} / {{ coverage.issues_total }}</b></div>
+        <div class="bar">
+          {% set t = coverage.issues_total or 1 %}
+          <span class="filled" style="width:{{ (100 * coverage.issues_sourced / t) }}%"></span>
+          <span class="partial" style="width:{{ (100 * coverage.issues_partial / t) }}%"></span>
+          <span class="none" style="width:{{ (100 * coverage.issues_unsourced / t) }}%"></span>
+        </div>
+      </div>
+      <div class="coverage">
+        <div class="coverage-top"><span>{{ coverage.preservation_label }}</span>
+          <b>{{ coverage.preservation_raised }} / {{ coverage.preservation_total }}</b></div>
+        <div class="bar">
+          {% set p = coverage.preservation_total or 1 %}
+          <span class="filled" style="width:{{ (100 * coverage.preservation_raised / p) }}%"></span>
+          <span class="none" style="width:{{ (100 * (coverage.preservation_total - coverage.preservation_raised) / p) }}%"></span>
+        </div>
+      </div>
+      <p class="sub">{{ coverage.note }}</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Plain English</h2></div>
+    <div class="panel-body">
+      <div class="explain"><b>Preservation</b>
+        <p>Raising an issue, asking for a ruling on it, and getting one — so a
+           reviewing court can consider it later. An issue never raised is
+           usually not reviewable.</p></div>
+      <div class="explain"><b>Exceptions</b>
+        <p>Written objections to a Recommended Decision. Missing the window can
+           forfeit the objection even when the point was good.</p></div>
+      <div class="explain"><b>Waiver</b>
+        <p>Losing a right by not asserting it in time. An unruled motion left
+           alone on the record is the common way this happens.</p></div>
+      <div class="explain"><b>Why "blocked" and not "unlikely"</b>
+        <p>A path here is blocked when a named record fact is missing, and the
+           missing thing is stated so it can be fixed. This system does not
+           estimate how likely a filing is to succeed.</p></div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

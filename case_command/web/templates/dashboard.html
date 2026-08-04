@@ -1,186 +1,218 @@
 {% extends "base.html" %}
-{% block title %}Command Dashboard — Case Command{% endblock %}
+{% block title %}Command Center{% endblock %}
+{% block heading %}Command Center{% endblock %}
 {% block content %}
-<h1>Command Dashboard</h1>
-<p class="sub">{{ data.counts.documents }} documents · {{ data.counts.issues }} issues ·
-   {{ data.counts.unknowns }} open unknowns</p>
 
-{% if data.todays_actions %}
-<div class="banner {{ 'urgent' if data.todays_actions[0].priority == 'URGENT' }}">
-  <strong>Today's actions</strong>
-  <ul class="tight">
-    {% for action in data.todays_actions[:8] %}
-    <li><span class="chip {{ 'urgent' if action.priority in ('MISSED', 'URGENT') else 'warn' if action.priority == 'SOON' }}">{{ action.priority }}</span>
-        <a href="{{ action.link }}">{{ action.action }}</a> — <span class="muted">{{ action.why }}</span></li>
-    {% endfor %}
-  </ul>
-</div>
-{% else %}
-<div class="banner">Nothing is due and nothing is waiting on a decision.</div>
-{% endif %}
-
-<div class="grid">
-  {% if data.overdue_deadlines %}
-  <div class="card urgent">
-    <div class="metric-label">Dates already passed</div>
-    <div class="metric">{{ data.overdue_deadlines | length }}</div>
-    {% for d in data.overdue_deadlines[:4] %}
-      <div>{{ d.due_date }} — {{ d.title }}
-        <span class="chip urgent">{{ (d.days_until * -1) }} day(s) ago</span></div>
-    {% endfor %}
-    <div class="sub">Confirm whether each was met and whether the interval was computed
-      correctly. These are not upcoming deadlines.</div>
-  </div>
-  {% endif %}
-
-  <div class="card {{ 'urgent' if data.next_deadline and (data.next_deadline.days_until or 99) <= 7 }}">
-    <div class="metric-label">Next deadline</div>
-    {% if data.next_deadline %}
-      <div class="metric">{{ data.next_deadline.due_date }}</div>
-      <div>{{ data.next_deadline.title }}</div>
-      <div class="sub">{{ data.next_deadline.days_until }} day(s) · {{ data.next_deadline.matter_slug or '—' }}
-        · <span class="chip warn">{{ data.next_deadline.verification_status }}</span></div>
-      <div class="sub">{{ data.next_deadline.notes }}</div>
-    {% else %}<p class="empty">No deadline recorded.</p>{% endif %}
-  </div>
-
-  <div class="card">
-    <div class="metric-label">Next hearing</div>
+{% set first = data.todays_actions[0] if data.todays_actions else None %}
+<div class="mission">
+  <div>
+    <div class="mission-label">Mission now</div>
     {% if data.next_hearing %}
-      <div class="metric">{{ data.next_hearing.event_date }}</div>
-      <div>{{ data.next_hearing.title }}</div>
-      <div class="sub">{{ data.next_hearing.matter_slug or '—' }}</div>
-    {% else %}<p class="empty">No hearing scheduled in the record.</p>{% endif %}
-  </div>
-
-  <div class="card {{ 'urgent' if data.waiver_risks }}">
-    <div class="metric-label">Waiver risks</div>
-    <div class="metric">{{ data.waiver_risks | length }}</div>
-    {% for risk in data.waiver_risks[:5] %}
-      <div><a href="/preservation?matter_id={{ risk.matter_id }}">{{ risk.issue_key or risk.title }}</a>
-        <span class="chip urgent">
-          {% if risk.ignored and not risk.exception_filed %}ignored, no exception
-          {% elif risk.exception_required and not risk.exception_filed %}exception due
-          {% else %}no ruling{% endif %}</span></div>
-    {% else %}<p class="empty">No preservation risk detected.</p>{% endfor %}
-  </div>
-
-  <div class="card {{ 'warn' if data.open_contradictions }}">
-    <div class="metric-label">Open contradictions</div>
-    <div class="metric">{{ data.open_contradictions | length }}</div>
-    {% for row in data.open_contradictions[:5] %}
-      <div>{{ row.title }}</div>
-    {% else %}<p class="empty">None recorded.</p>{% endfor %}
-  </div>
-
-  <div class="card {{ 'warn' if data.unresolved_motions }}">
-    <div class="metric-label">Unresolved motions</div>
-    <div class="metric">{{ data.unresolved_motions | length }}</div>
-    {% for row in data.unresolved_motions[:6] %}
-      <div>{{ row.title }}
-        {% if row.threshold_motion %}<span class="chip urgent">threshold</span>{% endif %}
-        <span class="chip">{{ row.filed_date or 'date unknown' }}</span></div>
-    {% else %}<p class="empty">None pending.</p>{% endfor %}
-  </div>
-
-  <div class="card {{ 'warn' if data.missing_rulings }}">
-    <div class="metric-label">Missing rulings</div>
-    <div class="metric">{{ data.missing_rulings | length }}</div>
-    {% for row in data.missing_rulings[:6] %}
-      <div>{{ row.issue_key or row.title }}</div>
-    {% else %}<p class="empty">Every request has a ruling.</p>{% endfor %}
-  </div>
-
-  <div class="card {{ 'warn' if data.missing_evidence }}">
-    <div class="metric-label">Missing evidence</div>
-    <div class="metric">{{ data.missing_evidence | length }}</div>
-    {% for row in data.missing_evidence[:6] %}
-      <div>{{ row.issue_key }} — {{ row.title }}
-        {% if row.missing_proof %}<span class="chip gap">{{ row.missing_proof[:60] }}</span>{% endif %}</div>
-    {% else %}<p class="empty">No proof gaps flagged.</p>{% endfor %}
-  </div>
-
-  <div class="card {{ 'warn' if data.unverified_facts }}">
-    <div class="metric-label">Unverified facts</div>
-    <div class="metric">{{ data.unverified_facts | length }}</div>
-    {% for row in data.unverified_facts[:6] %}
-      <div>{{ row.title }} <span class="chip warn">{{ row.verification_status }}</span></div>
-    {% else %}<p class="empty">Every active fact is verified.</p>{% endfor %}
-  </div>
-
-  <div class="card ok">
-    <div class="metric-label">Strongest argument</div>
-    {% if data.strongest_argument %}
-      <div>{{ data.strongest_argument.issue_key }} — {{ data.strongest_argument.title }}</div>
-      <div class="sub">{{ data.strongest_argument.verification_status }}
-        · risk {{ data.strongest_argument.risk_rating or 'unrated' }}</div>
+      <div class="mission-title">{{ data.next_hearing.title }} — {{ data.next_hearing.event_date }}</div>
+      <div class="mission-why">{{ data.next_hearing.matter_slug or '' }}
+        {% if data.next_hearing.legal_significance %}· {{ data.next_hearing.legal_significance }}{% endif %}</div>
+    {% elif data.next_deadline %}
+      <div class="mission-title">{{ data.next_deadline.title }}</div>
+      <div class="mission-why">Due {{ data.next_deadline.due_date }} ·
+        {{ data.next_deadline.days_until }} day(s) · {{ data.next_deadline.matter_slug or '' }}</div>
     {% else %}
-      <p class="empty">No issue has reached verified status yet — every issue is still
-        waiting on a linked source.</p>
+      <div class="mission-title">No hearing or deadline in the record</div>
+      <div class="mission-why">Nothing is scheduled. If that is wrong, the record is
+        incomplete rather than the calendar empty.</div>
     {% endif %}
+    <div class="mission-meta">{{ data.counts.documents }} documents ·
+      {{ data.counts.issues }} issues · {{ data.counts.unknowns }} open unknowns</div>
   </div>
 
-  <div class="card">
-    <div class="metric-label">Strongest defense against you</div>
-    {% if data.strongest_defense %}
-      <div>{{ data.strongest_defense.title }}</div>
-      <div class="sub">raised by {{ data.strongest_defense.raised_by or 'unknown' }}
-        · strength {{ data.strongest_defense.strength or 'unrated' }}</div>
-      <div class="sub">Reply: {{ data.strongest_defense.best_reply or 'NOT YET DRAFTED' }}</div>
-    {% else %}<p class="empty">No defense recorded. Run a red-team review.</p>{% endif %}
-  </div>
-
-  <div class="card {{ 'urgent' if data.access_barriers.count }}">
-    <div class="metric-label">Access barriers (prejudice evidence)</div>
-    <div class="metric">{{ data.access_barriers.count }}</div>
-    {% if data.access_barriers.count %}
-      <div class="sub">{{ data.access_barriers.date_range }} ·
-        {{ data.access_barriers.deadlines_affected }} deadline(s) affected ·
-        {{ data.access_barriers.with_supporting_document }} with proof</div>
-      {% for entry in data.access_barriers.deadline_list[:3] %}
-        <div>{{ entry.date }} — {{ entry.blocked }}
-          <span class="chip urgent">{{ entry.barrier }}</span></div>
-      {% endfor %}
-      {% for gap in data.access_barriers.gaps[:2] %}
-        <div class="sub missing">{{ gap }}</div>
-      {% endfor %}
-      <div class="sub">Linked to {{ data.access_barriers.linked_issues | join(', ') }}</div>
+  <div class="next">
+    <div class="mission-label next">Next action</div>
+    {% if first %}
+      <div class="mission-title">{{ first.action }}</div>
+      <div class="mission-why">{{ first.why }}</div>
+      <div class="mission-meta">
+        <span class="chip {{ 'danger' if first.priority in ('MISSED','URGENT') else 'warn' if first.priority == 'SOON' }}">{{ first.priority }}</span>
+        <a href="{{ first.link }}">Open →</a>
+      </div>
     {% else %}
-      <p class="empty">{{ data.access_barriers.note }}</p>
+      <div class="mission-title">Nothing is waiting</div>
+      <div class="mission-why">No deadline inside 14 days, no pending decision,
+        no Fleet item awaiting review.</div>
     {% endif %}
-  </div>
-
-  <div class="card {{ 'warn' if data.open_approvals }}">
-    <div class="metric-label">Waiting on you</div>
-    <div class="metric">{{ data.open_approvals | length }}</div>
-    <a href="/approvals">Review decisions</a>
-  </div>
-
-  <div class="card {{ 'warn' if data.fleet_pending }}">
-    <div class="metric-label">Fleet proposals pending</div>
-    <div class="metric">{{ data.fleet_pending | map(attribute='pending_items') | sum }}</div>
-    <a href="/fleet">Review Fleet output</a>
   </div>
 </div>
 
-<h2>Matters</h2>
-<div class="table-wrap">
-<table>
-  <tr><th>Matter</th><th>Case number</th><th>Forum</th><th>Boundary</th>
-      <th>Issues</th><th>Active</th><th>Documents</th><th></th></tr>
-  {% for m in data.matters %}
-  <tr>
-    <td><a href="/matter?id={{ m.id }}">{{ m.title }}</a></td>
-    <td>{{ m.case_number or '—' }}</td>
-    <td>{{ m.forum or '—' }}</td>
-    <td>{{ m.boundary_date or '—' }}</td>
-    <td>{{ m.issue_count }}</td>
-    <td>{{ m.active_issue_count }}</td>
-    <td>{{ m.document_count }}</td>
-    <td><a href="/hearing?matter_id={{ m.id }}">hearing</a> ·
-        <a href="/preservation?matter_id={{ m.id }}">preservation</a></td>
-  </tr>
-  {% endfor %}
-</table>
+<div class="alerts">
+  <a class="alert {{ 'danger' if data.overdue_deadlines else 'calm' }}" href="/preservation">
+    <div class="k">Dates already passed</div>
+    <div class="v">{{ data.overdue_deadlines | length }}</div>
+    <div class="s">{{ 'Confirm each was met' if data.overdue_deadlines else 'None' }}</div>
+  </a>
+  <a class="alert {{ 'danger' if data.urgent_filings else 'calm' }}" href="/preservation">
+    <div class="k">Deadlines at risk</div>
+    <div class="v">{{ data.urgent_filings | length }}</div>
+    <div class="s">Next 7 days</div>
+  </a>
+  <a class="alert {{ 'warn' if data.waiver_risks else 'calm' }}" href="/preservation">
+    <div class="k">Waiver risk</div>
+    <div class="v">{{ data.waiver_risks | length }}</div>
+    <div class="s">Unruled, ignored, or exception due</div>
+  </a>
+  <a class="alert {{ 'warn' if data.open_contradictions else 'calm' }}" href="/issues">
+    <div class="k">Record conflicts</div>
+    <div class="v">{{ data.open_contradictions | length }}</div>
+    <div class="s">Require resolution</div>
+  </a>
+  <a class="alert {{ 'info' if data.open_approvals else 'calm' }}" href="/approvals">
+    <div class="k">Waiting on you</div>
+    <div class="v">{{ data.open_approvals | length }}</div>
+    <div class="s">Matter or filing decisions</div>
+  </a>
+  <a class="alert {{ 'info' if data.fleet_pending else 'calm' }}" href="/fleet">
+    <div class="k">Fleet review queue</div>
+    <div class="v">{{ data.fleet_pending | map(attribute='pending_items') | sum }}</div>
+    <div class="s">Outside the record until approved</div>
+  </a>
+</div>
+
+<div class="grid two">
+  <div class="panel">
+    <div class="panel-head"><h2>Today's actions</h2><span class="spacer"></span>
+      <span class="sub">{{ data.todays_actions | length }} item(s)</span></div>
+    <div class="panel-body flush">
+      <div class="table-wrap"><table>
+        <tr><th>Priority</th><th>Action</th><th>Why it matters</th></tr>
+        {% for a in data.todays_actions[:12] %}
+        <tr>
+          <td><span class="chip {{ 'danger' if a.priority in ('MISSED','URGENT') else 'warn' if a.priority == 'SOON' else 'info' }}">{{ a.priority }}</span></td>
+          <td><a href="{{ a.link }}">{{ a.action }}</a></td>
+          <td class="sub">{{ a.why }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="empty">Nothing due and nothing waiting.</td></tr>
+        {% endfor %}
+      </table></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Record coverage</h2></div>
+    <div class="panel-body">
+      <div class="coverage">
+        <div class="coverage-top"><span>Issues with a linked source</span>
+          <b>{{ data.coverage.issues_sourced }} / {{ data.coverage.issues_total }}</b></div>
+        <div class="bar">
+          {% set t = data.coverage.issues_total or 1 %}
+          <span class="filled" style="width:{{ (100 * data.coverage.issues_sourced / t) }}%"></span>
+          <span class="partial" style="width:{{ (100 * data.coverage.issues_partial / t) }}%"></span>
+          <span class="none" style="width:{{ (100 * data.coverage.issues_unsourced / t) }}%"></span>
+        </div>
+      </div>
+      <div class="coverage">
+        <div class="coverage-top"><span>Issues recorded as raised below</span>
+          <b>{{ data.coverage.preservation_raised }} / {{ data.coverage.preservation_total }}</b></div>
+        <div class="bar">
+          {% set p = data.coverage.preservation_total or 1 %}
+          <span class="filled" style="width:{{ (100 * data.coverage.preservation_raised / p) }}%"></span>
+          <span class="none" style="width:{{ (100 * (data.coverage.preservation_total - data.coverage.preservation_raised) / p) }}%"></span>
+        </div>
+      </div>
+      <p class="sub">{{ data.coverage.note }}</p>
+
+      {% if data.access_barriers.count %}
+      <div class="explain" style="margin-top:.7rem">
+        <b>Access barriers logged: {{ data.access_barriers.count }}</b>
+        <p>{{ data.access_barriers.deadlines_affected }} affected a deadline ·
+           {{ data.access_barriers.with_supporting_document }} have supporting proof ·
+           {{ data.access_barriers.reported_to_tribunal }} reported to the tribunal.
+           <a href="/access">Open log →</a></p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:.8rem">
+  <div class="panel {{ 'warn' if data.unresolved_motions }}">
+    <div class="panel-head"><h2>Unresolved motions</h2></div>
+    <div class="panel-body">
+      {% for m in data.unresolved_motions[:6] %}
+        <div>{{ m.title }}
+          {% if m.threshold_motion %}<span class="chip danger">threshold</span>{% endif %}
+          <span class="chip">{{ m.filed_date or 'date unknown' }}</span></div>
+      {% else %}<p class="empty">None pending.</p>{% endfor %}
+    </div>
+  </div>
+
+  <div class="panel {{ 'danger' if data.missing_rulings }}">
+    <div class="panel-head"><h2>Missing rulings</h2></div>
+    <div class="panel-body">
+      {% for r in data.missing_rulings[:6] %}
+        <div><a href="/preservation?matter_id={{ r.matter_id }}">{{ r.issue_key or r.title }}</a>
+          <span class="chip danger">requested, not ruled</span></div>
+      {% else %}<p class="empty">Every request has a ruling.</p>{% endfor %}
+    </div>
+  </div>
+
+  <div class="panel {{ 'warn' if data.open_contradictions }}">
+    <div class="panel-head"><h2>Contradictions</h2></div>
+    <div class="panel-body">
+      {% for c in data.open_contradictions[:5] %}
+        <div>{{ c.title }}</div>
+        <div class="sub">{{ (c.left_statement or '')[:70] }} ⇄ {{ (c.right_statement or '')[:70] }}</div>
+      {% else %}<p class="empty">None recorded.</p>{% endfor %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Strongest recorded position</h2></div>
+    <div class="panel-body">
+      {% if data.strongest_argument %}
+        <div><b>{{ data.strongest_argument.issue_key }}</b> — {{ data.strongest_argument.title }}</div>
+        <div class="sub">{{ data.strongest_argument.verification_status }}</div>
+      {% else %}
+        <p class="empty">No issue has a verified source yet, so none can be called
+          strongest. This is a statement about the record, not about the case.</p>
+      {% endif %}
+      <div style="margin-top:.6rem"><b>Strongest argument against you</b></div>
+      {% if data.strongest_defense %}
+        <div>{{ data.strongest_defense.title }}</div>
+        <div class="sub">Reply: {{ data.strongest_defense.best_reply or 'NOT YET DRAFTED' }}</div>
+      {% else %}
+        <p class="empty">No opposing argument recorded. Run a red-team review.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:.8rem">
+  <div class="panel-head"><h2>Matters</h2><span class="spacer"></span>
+    <span class="sub">Kept separate — linked, never merged</span></div>
+  <div class="panel-body flush">
+    <div class="table-wrap"><table>
+      <tr><th>Matter</th><th>Case number</th><th>Forum</th><th>Boundary</th>
+          <th class="num">Issues</th><th class="num">Active</th><th class="num">Docs</th><th>Open</th></tr>
+      {% for m in data.matters %}
+      <tr>
+        <td><a href="/matter?id={{ m.id }}">{{ m.title }}</a></td>
+        <td>{{ m.case_number or '—' }}</td>
+        <td class="sub">{{ m.forum or '—' }}</td>
+        <td>{{ m.boundary_date or '—' }}</td>
+        <td class="num">{{ m.issue_count }}</td>
+        <td class="num">{{ m.active_issue_count }}</td>
+        <td class="num">{{ m.document_count }}</td>
+        <td><a href="/atlas?matter_id={{ m.id }}">atlas</a> ·
+            <a href="/hearing?matter_id={{ m.id }}">hearing</a></td>
+      </tr>
+      {% endfor %}
+    </table></div>
+  </div>
+</div>
+
+<div class="statbar">
+  <div class="s"><div class="k">Open matters</div><div class="v">{{ data.matters | length }}</div></div>
+  <div class="s"><div class="k">Documents</div><div class="v">{{ data.counts.documents }}</div></div>
+  <div class="s"><div class="k">Issues</div><div class="v">{{ data.counts.issues }}</div></div>
+  <div class="s"><div class="k">Open unknowns</div><div class="v">{{ data.counts.unknowns }}</div></div>
+  <div class="s"><div class="k">Access barriers</div><div class="v">{{ data.access_barriers.count }}</div></div>
 </div>
 {% endblock %}
