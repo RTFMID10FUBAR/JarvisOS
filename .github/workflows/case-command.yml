@@ -102,6 +102,12 @@ jobs:
   apk:
     name: Android APK
     runs-on: ubuntu-latest
+    # Needed to publish the APK as a release asset. An Actions artifact is a
+    # zip behind an authenticated API, which a phone cannot fetch — the GitHub
+    # mobile app shows its name and lets you copy the digest and nothing else.
+    # A release asset is an ordinary URL that downloads on a phone.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -124,13 +130,72 @@ jobs:
         working-directory: clients/android
         run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Report what was produced
+      - name: Name it, size it, hash it
+        id: apk
         working-directory: clients/android
         run: |
-          find app/build/outputs -name '*.apk' -exec ls -lh {} \;
+          set -eux
+          BUILT=$(find app/build/outputs -name '*.apk' | head -1)
+          # A stable, meaningful filename. The default is app-debug.apk, which
+          # tells you nothing sitting in a phone's Downloads folder next to
+          # four other app-debug.apk files.
+          cp "$BUILT" "${RUNNER_TEMP}/case-command-debug.apk"
+          ls -lh "${RUNNER_TEMP}/case-command-debug.apk"
+          SHA=$(sha256sum "${RUNNER_TEMP}/case-command-debug.apk" | cut -d" " -f1)
+          SIZE=$(stat -c%s "${RUNNER_TEMP}/case-command-debug.apk")
+          echo "sha=$SHA"   >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
 
+      # Kept for desktop downloads.
       - uses: actions/upload-artifact@v4
         with:
           name: case-command-debug-apk
-          path: clients/android/app/build/outputs/apk/debug/*.apk
+          path: ${{ runner.temp }}/case-command-debug.apk
           if-no-files-found: error
+
+      # The copy a phone can actually open. Fixed tag, asset clobbered each
+      # build, so the download URL never changes. Push only, so a PR run does
+      # not churn the release.
+      - name: Publish a download a phone can open
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK_SHA: ${{ steps.apk.outputs.sha }}
+          APK_SIZE: ${{ steps.apk.outputs.size }}
+        run: |
+          set -eux
+          # Notes are written line by line rather than with a heredoc. A
+          # heredoc nested in a YAML block scalar is two layers of significant
+          # whitespace, and it already broke this workflow once.
+          NOTES="${RUNNER_TEMP}/notes.md"
+          {
+            echo "Debug build of the Case Command Android client, built by CI"
+            echo "from \`${GITHUB_SHA}\`."
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| size | ${APK_SIZE} bytes |"
+            echo "| sha256 | \`${APK_SHA}\` |"
+            echo
+            echo "**Debug-signed.** Android will warn about an unknown source."
+            echo "That is expected for a build that did not come from the Play"
+            echo "Store. Verify the digest above if you care to."
+            echo
+            echo "**This APK has never been run on a device.** CI proves it"
+            echo "compiles, links, packages and signs. It does not prove that"
+            echo "any screen renders correctly."
+            echo
+            echo "It talks to one machine on your local network — the Case"
+            echo "Command desktop. Pair it with \`case-command device pair\`."
+            echo "No cloud, no account, and it cannot file or send anything."
+          } > "$NOTES"
+
+          gh release create android-debug \
+            --prerelease \
+            --title "Case Command — Android debug APK" \
+            --notes-file "$NOTES" || true
+          gh release edit android-debug --notes-file "$NOTES"
+          gh release upload android-debug \
+            "${RUNNER_TEMP}/case-command-debug.apk" --clobber
+
+          echo "Download: https://github.com/${GITHUB_REPOSITORY}/releases/download/android-debug/case-command-debug.apk"
