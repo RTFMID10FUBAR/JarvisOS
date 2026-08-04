@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import (
     __version__, access, audit, backup, checks, fleet, health, migrate_tree,
-    packets, triage, views, watcher,
+    offline, packets, triage, views, watcher,
 )
 from .config import LITIGATION_FOLDERS, ensure_layout, load_config
 from .db import open_database
@@ -248,6 +248,56 @@ def cmd_access(args) -> int:
     return 0
 
 
+def cmd_offline(args) -> int:
+    """Choose what stays readable on the phone with no signal."""
+    config = _config(args)
+    conn = open_database(config)
+    try:
+        if args.action == "pin":
+            _print(offline.pin(conn, args.document_id, reason=args.reason,
+                               include_original=args.with_original,
+                               priority=args.priority, actor=args.actor))
+        elif args.action == "unpin":
+            _print(offline.unpin(conn, args.document_id, reason=args.reason_filter,
+                                 actor=args.actor))
+        elif args.action == "pack":
+            result = offline.build_hearing_pack(conn, args.matter_id,
+                                                include_originals=args.with_original,
+                                                actor=args.actor)
+            print(f"Pinned {result['pinned']} document(s) for {result['matter']} "
+                  f"— {result['storage']['total_mb']} MB")
+            print(result["note"])
+            for entry in result["storage"]["unavailable"]:
+                print(f"  ! {entry['doc_uid']}: {entry['reason']}")
+        elif args.action == "list":
+            pins = offline.list_pins(conn, args.matter_id)
+            if args.json:
+                _print(pins)
+            elif not pins:
+                print("Nothing pinned. Start with the exhibits for your next hearing:\n"
+                      "  case-command offline pack --matter-id <id>")
+            else:
+                report = offline.storage_report(conn)
+                print(f"{report['pin_count']} pinned · {report['total_mb']} MB "
+                      f"of {report['budget_mb']} MB budget\n")
+                for p_ in pins:
+                    flag = "!" if p_["sync_state"] == "UNAVAILABLE" else " "
+                    print(f"{flag} {p_['doc_uid']:<15} {p_['reason']:<13} "
+                          f"{round((p_['est_bytes'] or 0)/1048576, 2):>6} MB  "
+                          f"{(p_['extract_line'] or p_['title'] or '')[:44]}")
+                for entry in report["unavailable"]:
+                    print(f"\n  ! {entry['doc_uid']}: {entry['reason']}")
+        elif args.action == "storage":
+            _print(offline.storage_report(conn))
+        elif args.action == "bundle":
+            _print(offline.build_bundle(conn, args.matter_id))
+        elif args.action == "captures":
+            _print(offline.capture_log(conn))
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_backup(args) -> int:
     config = _config(args)
     conn = open_database(config, migrate_if_needed=False)
@@ -429,6 +479,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_access)
+
+    p = sub.add_parser("offline",
+                       help="what stays readable on the phone with no signal")
+    p.add_argument("action",
+                   choices=["list", "pin", "unpin", "pack", "storage", "bundle", "captures"],
+                   nargs="?", default="list")
+    p.add_argument("--document-id", type=int)
+    p.add_argument("--matter-id", type=int)
+    p.add_argument("--reason", default="MANUAL", choices=list(offline.PIN_REASONS))
+    p.add_argument("--reason-filter", help="for unpin: release only this reason")
+    p.add_argument("--with-original", action="store_true",
+                   help="also keep the original file, not just its text")
+    p.add_argument("--priority", type=int, default=100)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_offline)
 
     p = sub.add_parser("backup", help="backup, verify, and restore")
     p.add_argument("action", choices=["create", "list", "verify", "restore", "prune"])

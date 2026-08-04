@@ -1,0 +1,66 @@
+{% extends "m_base.html" %}
+{% block title %}Capture{% endblock %}
+{% block content %}
+
+<div class="m-note">
+  A photograph taken now will never exist again. Capture works with no signal —
+  it is stored on this device and uploaded when a connection returns. The time
+  recorded is the moment you took it, not the moment it uploaded.
+</div>
+
+<form data-capture-form>
+  <div class="m-capture">
+    <div class="big">◉</div>
+    <input type="file" id="shot" name="file" accept="image/*,application/pdf" capture="environment">
+    <label class="shot" for="shot">Take a photo or choose a file</label>
+  </div>
+
+  <div class="m-field">
+    <label for="kind">Kind</label>
+    <select id="kind" name="capture_kind">
+      <option value="PHOTO">Photo</option>
+      <option value="SCAN">Scanned document</option>
+      <option value="AUDIO">Audio</option>
+      <option value="VIDEO">Video</option>
+      <option value="NOTE">Note</option>
+    </select>
+  </div>
+
+  <div class="m-field">
+    <label for="matter">Matter</label>
+    <select id="matter" name="matter_id">
+      <option value="">decide later</option>
+      {% for m in matters %}<option value="{{ m.id }}">{{ m.title }}</option>{% endfor %}
+    </select>
+  </div>
+
+  <div class="m-field">
+    <label for="note">What is this, and why does it matter?</label>
+    <textarea id="note" name="device_note"
+      placeholder="Meter pulled at 2:15pm; tag number visible. Witness present."></textarea>
+  </div>
+
+  <button class="m-btn" type="submit">Save capture</button>
+</form>
+
+<div class="m-section">Waiting to upload</div>
+<div class="m-list" data-capture-queue>
+  <p class="m-empty">Nothing waiting to upload.</p>
+</div>
+
+<div class="m-section">Recently received</div>
+<div class="m-list">
+  {% for c in captures[:10] %}
+  <div class="m-row">
+    <div><b>{{ c.filename }}</b>
+      <div class="m-sub">{{ c.capture_kind }} ·
+        {{ (c.captured_at or c.received_at)[:16].replace('T',' ') }}
+        {% if c.doc_uid %}· {{ c.doc_uid }}{% endif %}</div>
+      {% if c.device_note %}<div class="m-sub">{{ c.device_note }}</div>{% endif %}</div>
+    <span class="m-chip {{ 'ok' if c.state == 'INGESTED' else 'warn' if c.state in ('RECEIVED','DUPLICATE') else 'danger' }}">{{ c.state }}</span>
+  </div>
+  {% else %}
+  <p class="m-empty">No captures yet.</p>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from .. import __version__, access, atlas, audit, fleet, health, triage, views
+from .. import (
+    __version__, access, atlas, audit, fleet, health, offline, triage, views,
+)
 from ..config import Config, LITIGATION_FOLDERS, load_config
 from ..db import open_database, utcnow
 
@@ -124,6 +126,13 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
 
         routes: dict[str, Callable[[dict[str, list[str]]], None]] = {
             "/": self.view_dashboard,
+            "/m": self.m_home,
+            "/m/offline": self.m_offline,
+            "/m/capture": self.m_capture,
+            "/m/deadlines": self.m_deadlines,
+            "/m/hearing": self.m_hearing,
+            "/m/doc": self.m_doc,
+            "/api/offline/bundle": self.api_offline_bundle,
             "/atlas": self.view_atlas,
             "/access": self.view_access,
             "/triage": self.view_triage,
@@ -155,11 +164,25 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length).decode("utf-8") if length else ""
-        form = parse_qs(raw)
+        content_type = self.headers.get("Content-Type") or ""
+
+        # Multipart bodies are binary and are read by the handler itself.
+        if content_type.startswith("multipart/form-data"):
+            form: dict[str, list[str]] = {}
+        else:
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length).decode("utf-8") if length else ""
+            form = parse_qs(raw)
 
         try:
+            if parsed.path == "/api/capture":
+                return self.post_capture()
+            if parsed.path == "/m/pin":
+                return self.post_pin(form)
+            if parsed.path == "/m/unpin":
+                return self.post_unpin(form)
+            if parsed.path == "/m/pack":
+                return self.post_pack(form)
             if parsed.path == "/triage/decide":
                 return self.post_triage_decide(form)
             if parsed.path == "/approvals/resolve":
@@ -175,8 +198,25 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
         target = STATIC_DIR / name
         if not target.exists() or not target.is_file():
             return self._send(b"not found", 404, "text/plain")
-        content_type = "text/css" if name.endswith(".css") else "application/octet-stream"
-        self._send(target.read_bytes(), 200, content_type)
+        content_type = {
+            ".css": "text/css",
+            ".js": "text/javascript",
+            ".svg": "image/svg+xml",
+            ".webmanifest": "application/manifest+json",
+            ".json": "application/json",
+        }.get(target.suffix, "application/octet-stream")
+        body = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        # The service worker must be allowed to control the whole origin, not
+        # just /static, or the offline pages below /m would never be served.
+        if name == "sw.js":
+            self.send_header("Service-Worker-Allowed", "/")
+            self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
 
     # -- views --------------------------------------------------------------
     def view_dashboard(self, params: dict[str, list[str]]) -> None:
@@ -238,6 +278,166 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
             self._redirect("/triage")
         except ValueError as exc:
             self._send(f"<h1>400</h1><p>{exc}</p>".encode("utf-8"), 400)
+        finally:
+            conn.close()
+
+    # -- phone (PWA) --------------------------------------------------------
+    def _m_render(self, template: str, **context: Any) -> None:
+        """Phone views do not carry the desktop rail counts."""
+        html = self.env.get_template(template).render(**context)
+        self._send(html.encode("utf-8"))
+
+    def m_home(self, params: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            pins = conn.execute("SELECT COUNT(*) FROM offline_pins").fetchone()[0]
+            self._m_render("m_home.html", tab="home", data=views.dashboard(conn),
+                           pins=pins)
+        finally:
+            conn.close()
+
+    def m_offline(self, params: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            self._m_render("m_offline.html", tab="offline",
+                           storage=offline.storage_report(conn),
+                           matters=views.list_matters(conn))
+        finally:
+            conn.close()
+
+    def m_capture(self, params: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            self._m_render("m_capture.html", tab="capture",
+                           matters=views.list_matters(conn),
+                           captures=offline.capture_log(conn))
+        finally:
+            conn.close()
+
+    def m_deadlines(self, params: dict[str, list[str]]) -> None:
+        from .. import preservation as pres
+
+        conn = self._conn()
+        try:
+            deadlines = pres.upcoming_deadlines(conn, limit=50)
+            for item in deadlines:
+                item["days_until"] = views.days_until(item.get("due_date"))
+            data = views.dashboard(conn)
+            self._m_render("m_deadlines.html", tab="deadlines",
+                           overdue=[d for d in deadlines if (d["days_until"] or 0) < 0],
+                           upcoming=[d for d in deadlines if (d["days_until"] or 0) >= 0],
+                           risks=data["waiver_risks"])
+        finally:
+            conn.close()
+
+    def m_hearing(self, params: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            matter_id = self._int(params, "matter_id")
+            data = views.hearing_mode(conn, matter_id) if matter_id else {}
+            self._m_render("m_hearing.html", tab="hearing", data=data,
+                           matters=views.list_matters(conn), back="/m")
+        finally:
+            conn.close()
+
+    def m_doc(self, params: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            document_id = self._int(params, "id")
+            document = conn.execute("SELECT * FROM documents WHERE id=?",
+                                    (document_id,)).fetchone() if document_id else None
+            if document is None:
+                return self._send(b"<h1>404</h1>", 404)
+            pinned = conn.execute("SELECT 1 FROM offline_pins WHERE document_id=?",
+                                  (document_id,)).fetchone() is not None
+            text = ""
+            if document["text_path"]:
+                path = Path(document["text_path"])
+                if path.exists():
+                    text = path.read_text(encoding="utf-8", errors="replace")[:200_000]
+            self._m_render("m_doc.html", tab="", document=dict(document),
+                           text=text, pinned=pinned, back="/m/offline")
+        finally:
+            conn.close()
+
+    def api_offline_bundle(self, params: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            bundle = offline.build_bundle(conn, self._int(params, "matter_id"))
+            offline.mark_synced(conn, [d["id"] for d in bundle["documents"]])
+            self._json(bundle)
+        finally:
+            conn.close()
+
+    # -- phone actions ------------------------------------------------------
+    def post_pin(self, form: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            offline.pin(conn, int((form.get("document_id") or ["0"])[0]))
+            self._redirect("/m/offline")
+        finally:
+            conn.close()
+
+    def post_unpin(self, form: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            offline.unpin(conn, int((form.get("document_id") or ["0"])[0]))
+            self._redirect("/m/offline")
+        finally:
+            conn.close()
+
+    def post_pack(self, form: dict[str, list[str]]) -> None:
+        conn = self._conn()
+        try:
+            offline.build_hearing_pack(conn, int((form.get("matter_id") or ["0"])[0]))
+            self._redirect("/m/offline")
+        finally:
+            conn.close()
+
+    def post_capture(self) -> None:
+        """Accept evidence captured on the device.
+
+        The body is multipart. `client_uid` is generated on the phone, so an
+        upload replayed after a dropped connection is recognised as the same
+        capture rather than counted twice.
+        """
+        import cgi
+
+        environ = {"REQUEST_METHOD": "POST",
+                   "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                   "CONTENT_LENGTH": self.headers.get("Content-Length", "0")}
+        try:
+            fields = cgi.FieldStorage(fp=self.rfile, headers=self.headers,
+                                      environ=environ, keep_blank_values=True)
+        except Exception as exc:
+            return self._json({"error": f"could not read upload: {exc}"}, 400)
+
+        def field(name: str, default: str = "") -> str:
+            value = fields.getvalue(name, default)
+            return value.decode("utf-8", "replace") if isinstance(value, bytes) else str(value)
+
+        upload = fields["file"] if "file" in fields else None
+        if upload is None or not getattr(upload, "filename", None):
+            return self._json({"error": "no file in upload"}, 400)
+
+        data = upload.file.read()
+        if not data:
+            return self._json({"error": "empty upload"}, 400)
+
+        matter_raw = field("matter_id")
+        conn = self._conn()
+        try:
+            result = offline.accept_capture(
+                conn, self.config,
+                client_uid=field("client_uid") or f"cap-{utcnow()}",
+                filename=upload.filename,
+                data=data,
+                capture_kind=field("capture_kind", "PHOTO") or "PHOTO",
+                matter_id=int(matter_raw) if matter_raw.isdigit() else None,
+                captured_at=field("captured_at") or None,
+                device_note=field("device_note") or None,
+            )
+            self._json(result)
         finally:
             conn.close()
 

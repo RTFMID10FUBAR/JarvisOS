@@ -1,0 +1,19 @@
+{
+  "name": "Case Command",
+  "short_name": "Case Cmd",
+  "description": "The canonical litigation record, readable with no signal.",
+  "start_url": "/m",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#070b14",
+  "theme_color": "#070b14",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

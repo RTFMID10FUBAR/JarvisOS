@@ -37,6 +37,13 @@ def build(root: Path) -> dict[str, object]:
             "LIKE 'psc%'").fetchall():
         conn.execute("UPDATE documents SET matter_id=? WHERE id=?", (case2["id"], row["id"]))
     conn.execute("UPDATE events SET matter_id=? WHERE matter_id IS NULL", (case2["id"],))
+    # Filings inherit the matter their document was assigned to. Ingestion could
+    # not know it, because the matter had not been confirmed yet.
+    conn.execute("""
+        UPDATE filings SET matter_id = (
+            SELECT d.matter_id FROM documents d WHERE d.id = filings.document_id)
+        WHERE matter_id IS NULL AND document_id IS NOT NULL
+    """)
 
     # -- parties, counsel, ALJ ---------------------------------------------
     for name, kind, role in (("Jacob Kerr", "party", "Complainant"),

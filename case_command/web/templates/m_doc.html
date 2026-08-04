@@ -1,0 +1,33 @@
+{% extends "m_base.html" %}
+{% block title %}{{ document.doc_uid }}{% endblock %}
+{% block heading %}{{ document.doc_uid }}{% endblock %}
+{% block content %}
+
+<div class="m-note">
+  <b>{{ document.title }}</b><br>
+  {{ document.document_date or 'no date found' }}
+  {% if document.date_source %}· <i>{{ document.date_source }}</i>{% endif %}<br>
+  {{ document.original_filename }} · {{ document.text_method }}
+  {% if document.ocr_used %}· <b>OCR — not exact</b>{% endif %}
+</div>
+
+{% if pinned %}
+<div class="m-note"><b>Saved on this device</b> — readable with no signal.</div>
+<form method="post" action="/m/unpin">
+  <input type="hidden" name="document_id" value="{{ document.id }}">
+  <button class="m-btn danger" type="submit">Remove from device</button>
+</form>
+{% else %}
+<form method="post" action="/m/pin">
+  <input type="hidden" name="document_id" value="{{ document.id }}">
+  <button class="m-btn" type="submit">Save for offline</button>
+</form>
+{% endif %}
+
+<div class="m-section">Text</div>
+{% if text %}
+<div class="m-doc">{{ text }}</div>
+{% else %}
+<p class="m-empty">No text extracted for this document.</p>
+{% endif %}
+{% endblock %}

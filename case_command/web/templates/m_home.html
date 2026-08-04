@@ -1,0 +1,69 @@
+{% extends "m_base.html" %}
+{% block title %}Case Command{% endblock %}
+{% block content %}
+
+{% set d = data.next_deadline %}
+{% set od = data.overdue_deadlines %}
+{% if od %}
+<div class="m-mission urgent">
+  <div class="k">Date already passed</div>
+  <b>{{ od[0].title }}</b>
+  <div class="countdown over" data-countdown="{{ od[0].due_date }}">—</div>
+  <div class="why">Confirm whether it was met and whether the interval was computed
+    correctly. This is not an upcoming deadline.</div>
+</div>
+{% elif d %}
+<div class="m-mission {{ 'urgent' if (d.days_until or 99) <= 3 }}">
+  <div class="k">Next deadline</div>
+  <b>{{ d.title }}</b>
+  <div class="countdown" data-countdown="{{ d.due_date }}">—</div>
+  <div class="why">Due {{ d.due_date }} · {{ d.matter_slug or '' }}<br>
+    The interval is provisional — confirm the governing rule.</div>
+</div>
+{% else %}
+<div class="m-mission">
+  <div class="k">Next deadline</div>
+  <b>Nothing scheduled</b>
+  <div class="why">No deadline in the record. If that is wrong, the record is
+    incomplete rather than the calendar empty.</div>
+</div>
+{% endif %}
+
+<div class="m-tiles">
+  <a class="m-tile {{ 'danger' if data.waiver_risks }}" href="/m/deadlines">
+    <div class="v">{{ data.waiver_risks | length }}</div><div class="k">At risk</div></a>
+  <a class="m-tile {{ 'warn' if data.open_approvals }}" href="/m">
+    <div class="v">{{ data.open_approvals | length }}</div><div class="k">Waiting</div></a>
+  <a class="m-tile info" href="/m/offline">
+    <div class="v">{{ pins }}</div><div class="k">Offline</div></a>
+</div>
+
+{% if data.next_hearing %}
+<div class="m-note"><b>Next hearing</b> — {{ data.next_hearing.event_date }} ·
+  {{ data.next_hearing.title }}. <a href="/m/hearing">Open hearing mode →</a></div>
+{% endif %}
+
+<div class="m-section">Today's actions</div>
+<div class="m-list">
+  {% for a in data.todays_actions[:6] %}
+  <a class="m-row" href="/m">
+    <div><b>{{ a.action }}</b><div class="m-sub">{{ a.why }}</div></div>
+    <span class="m-chip {{ 'danger' if a.priority in ('MISSED','URGENT') else 'warn' if a.priority == 'SOON' else 'info' }}">{{ a.priority }}</span>
+  </a>
+  {% else %}
+  <p class="m-empty">Nothing due and nothing waiting.</p>
+  {% endfor %}
+</div>
+
+<div class="m-section">Matters</div>
+<div class="m-list">
+  {% for m in data.matters %}
+  <a class="m-row" href="/m/hearing?matter_id={{ m.id }}">
+    <div><b>{{ m.title }}</b>
+      <div class="m-sub">{{ m.case_number or 'no case number' }} ·
+        {{ m.active_issue_count }} active issue(s)</div></div>
+    <span class="m-chip">{{ m.document_count }} doc</span>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

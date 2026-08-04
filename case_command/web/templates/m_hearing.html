@@ -1,0 +1,89 @@
+{% extends "m_base.html" %}
+{% block title %}Hearing{% endblock %}
+{% block content %}
+
+{% if not data %}
+<div class="m-section">Choose a matter</div>
+<div class="m-list">
+  {% for m in matters %}
+  <a class="m-row" href="/m/hearing?matter_id={{ m.id }}">
+    <div><b>{{ m.title }}</b><div class="m-sub">{{ m.case_number or '' }}</div></div>
+    <span class="m-chip">→</span>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+
+<div class="m-note"><b>Scope</b><br>{{ data.scope_statement }}</div>
+<div class="m-note warn"><b>If asked about the prior case</b><br>{{ data.scope_objection }}</div>
+
+<div class="m-section">Issues in scope ({{ data.in_scope_issues | length }})</div>
+<div class="m-list">
+  {% for i in data.in_scope_issues %}
+  <div class="m-row">
+    <div><b>{{ i.issue_key }} — {{ i.title }}</b>
+      <div class="m-sub">{{ i.boundary_classification }}</div>
+      {% if i.requested_finding %}<div class="m-sub">Ask: {{ i.requested_finding }}</div>
+      {% else %}<div class="m-sub"><span class="m-chip gap">no finding drafted</span></div>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if data.out_of_scope_issues %}
+<div class="m-section">Outside this hearing ({{ data.out_of_scope_issues | length }})</div>
+<div class="m-list">
+  {% for i in data.out_of_scope_issues %}
+  <div class="m-row"><div><b>{{ i.issue_key }} — {{ i.title }}</b>
+    <div class="m-sub">Still in the record. Not deleted.</div></div></div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="m-section">Objections</div>
+<div class="m-list">
+  {% for o in data.objections %}
+  <div class="m-row"><div><b>{{ o.ground }}</b>
+    <div class="m-sub">{{ o.when }}</div>
+    <div class="m-sub" style="color:var(--accent)">“{{ o.say }}”</div></div></div>
+  {% endfor %}
+</div>
+
+<div class="m-section">Exhibits</div>
+<div class="m-list">
+  {% for e in data.exhibit_sequence %}
+  <div class="m-row">
+    <div><b>{{ e.exhibit_number or '—' }} · {{ e.title }}</b>
+      <div class="m-sub">{{ e.doc_uid or 'no document attached' }}</div></div>
+  </div>
+  {% else %}
+  <p class="m-empty">No exhibits marked.</p>
+  {% endfor %}
+</div>
+
+<div class="m-section">Before you leave the room</div>
+<div class="m-list">
+  {% for r in data.preservation_at_risk %}
+  <div class="m-row">
+    <div><b>{{ r.issue_key or r.title }}</b>
+      <div class="m-sub">{% for f in r.risk_flags %}{{ f }}{{ '; ' if not loop.last }}{% endfor %}</div></div>
+    <span class="m-chip danger">preserve</span>
+  </div>
+  {% else %}
+  <p class="m-empty">No preservation risk flagged.</p>
+  {% endfor %}
+</div>
+
+<div class="m-section">Closing</div>
+<div class="m-list">
+  {% for line in data.closing_outline %}
+  <div class="m-row"><div><b>{{ loop.index }}. {{ line }}</b></div></div>
+  {% endfor %}
+</div>
+
+<form method="post" action="/m/pack" style="margin-top:.9rem">
+  <input type="hidden" name="matter_id" value="{{ data.matter.id }}">
+  <button class="m-btn ghost" type="submit">Pin this hearing for offline use</button>
+</form>
+{% endif %}
+{% endblock %}

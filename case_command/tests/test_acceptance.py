@@ -15,8 +15,8 @@ import unittest
 from pathlib import Path
 
 from .. import (
-    access, audit, backup, checks, fleet, health, migrate_tree, packets,
-    preservation, triage, views, watcher,
+    access, audit, backup, checks, fleet, health, migrate_tree, offline,
+    packets, preservation, triage, views, watcher,
 )
 from ..classify import classify_text
 from ..config import (
@@ -1159,6 +1159,165 @@ class TestAccessBarriers(CaseCommandTest):
         self._log(deadline_affected="Response due", deadline_date="2026-03-15")
         data = views.dashboard(self.conn)
         self.assertEqual(data["access_barriers"]["count"], 1)
+
+
+# ===========================================================================
+# Offline availability and phone capture
+# ===========================================================================
+class TestOffline(CaseCommandTest):
+
+    def test_pinning_a_document_reports_its_size_before_download(self):
+        result = ingest_path(self.config, self.conn, self.paths["psc_complaint"])
+        pinned = offline.pin(self.conn, result.document_id)
+        self.assertGreater(pinned["est_bytes"], 0)
+        self.assertIn("est_mb", pinned)
+
+        report = offline.storage_report(self.conn)
+        self.assertEqual(report["pin_count"], 1)
+        self.assertFalse(report["over_budget"])
+
+    def test_a_pin_that_cannot_be_honoured_says_so(self):
+        """A document with no extracted text cannot be read offline, and says so
+        now rather than in the hearing."""
+        broken = self.root / INBOX / "unreadable.xls"
+        broken.write_bytes(b"\x00\x01 not a spreadsheet")
+        result = ingest_path(self.config, self.conn, broken)
+        self.conn.execute("UPDATE documents SET text_path=NULL WHERE id=?",
+                          (result.document_id,))
+
+        offline.pin(self.conn, result.document_id)
+        row = self.conn.execute(
+            "SELECT * FROM offline_pins WHERE document_id=?",
+            (result.document_id,)).fetchone()
+        self.assertEqual(row["sync_state"], "UNAVAILABLE")
+        self.assertIn("nothing to read offline", row["sync_error"])
+
+        report = offline.storage_report(self.conn)
+        self.assertEqual(len(report["unavailable"]), 1)
+
+    def test_unpinning_keeps_the_document_in_the_record(self):
+        result = ingest_path(self.config, self.conn, self.paths["psc_complaint"])
+        offline.pin(self.conn, result.document_id)
+        outcome = offline.unpin(self.conn, result.document_id)
+
+        self.assertEqual(outcome["released"], 1)
+        still_there = self.conn.execute(
+            "SELECT COUNT(*) n FROM documents WHERE id=?",
+            (result.document_id,)).fetchone()["n"]
+        self.assertEqual(still_there, 1)
+        self.assertTrue(self.paths["psc_complaint"].exists())
+
+    def test_hearing_pack_pins_exhibits_first(self):
+        """Exhibits sync before everything else, so the most important material
+        lands even if the connection drops."""
+        self.ingest_all()
+        case2 = self.matter("psc-26-0315")
+        document = self.conn.execute("SELECT id FROM documents LIMIT 1").fetchone()
+        insert(self.conn, "evidence", {
+            "matter_id": case2["id"], "document_id": document["id"],
+            "title": "Photographs of spoiled food", "exhibit_number": "A",
+        })
+        self.conn.execute("UPDATE documents SET matter_id=? WHERE id=?",
+                          (case2["id"], document["id"]))
+
+        pack = offline.build_hearing_pack(self.conn, case2["id"])
+        self.assertGreater(pack["pinned"], 0)
+
+        priorities = {
+            row["document_id"]: row["priority"]
+            for row in self.conn.execute("SELECT document_id, priority FROM offline_pins")
+        }
+        self.assertEqual(priorities[document["id"]], 10)   # exhibit tier
+        self.assertTrue(all(p >= 10 for p in priorities.values()))
+
+    def test_hearing_pack_falls_back_to_matter_documents(self):
+        """Early in a matter nothing is an exhibit yet — walking in with an empty
+        phone would hurt most exactly then."""
+        self.ingest_all()
+        case2 = self.matter("psc-26-0315")
+        self.conn.execute(
+            "UPDATE documents SET matter_id=? WHERE folder='00_INBOX'", (case2["id"],))
+        pack = offline.build_hearing_pack(self.conn, case2["id"])
+        self.assertGreater(pack["pinned"], 0)
+
+    def test_bundle_carries_hearing_context_with_the_documents(self):
+        """Exhibits are useless offline without the scope statement and the
+        rule elements."""
+        self.ingest_all()
+        case2 = self.matter("psc-26-0315")
+        self.conn.execute("UPDATE documents SET matter_id=? WHERE folder='00_INBOX'",
+                          (case2["id"],))
+        offline.build_hearing_pack(self.conn, case2["id"])
+
+        bundle = offline.build_bundle(self.conn, case2["id"])
+        self.assertGreater(bundle["document_count"], 0)
+        self.assertIn("scope_statement", bundle["hearing"])
+        self.assertIn("objections", bundle["hearing"])
+        self.assertIn("in_scope_issues", bundle["hearing"])
+        # Text travels with it, or there is nothing to read.
+        self.assertTrue(any(d["text"] for d in bundle["documents"]))
+        # Provenance travels too.
+        self.assertTrue(all("date_source" in d for d in bundle["documents"]))
+
+    def test_bundle_omits_pins_that_cannot_be_honoured(self):
+        result = ingest_path(self.config, self.conn, self.paths["psc_complaint"])
+        offline.pin(self.conn, result.document_id)
+        self.conn.execute("UPDATE offline_pins SET sync_state='UNAVAILABLE'")
+        bundle = offline.build_bundle(self.conn)
+        self.assertEqual(bundle["document_count"], 0)
+
+    def test_capture_is_ingested_through_the_normal_pipeline(self):
+        outcome = offline.accept_capture(
+            self.conn, self.config,
+            client_uid="cap-1", filename="meter.txt",
+            data=b"Photograph of the meter base, tag 44812, taken at the residence.",
+            capture_kind="PHOTO", captured_at="2026-03-10T14:15:00Z",
+            device_note="Meter pulled; tag number visible.")
+
+        self.assertEqual(outcome["state"], "INGESTED")
+        self.assertIsNotNone(outcome["doc_uid"])
+
+        row = self.conn.execute("SELECT * FROM documents WHERE id=?",
+                                (outcome["document_id"],)).fetchone()
+        self.assertEqual(row["sha256"], row["sha256"])   # hashed like any document
+        # The capture time is the fact that matters, not the upload time.
+        self.assertEqual(row["document_date"], "2026-03-10")
+        self.assertEqual(row["date_source"], "captured on device")
+
+    def test_a_replayed_capture_is_not_counted_twice(self):
+        """A retry after a dropped connection is the same capture, not a second."""
+        payload = dict(client_uid="cap-retry", filename="a.txt", data=b"first capture")
+        first = offline.accept_capture(self.conn, self.config, **payload)
+        second = offline.accept_capture(self.conn, self.config, **payload)
+
+        self.assertEqual(first["state"], "INGESTED")
+        self.assertTrue(second["duplicate"])
+        rows = self.conn.execute(
+            "SELECT COUNT(*) n FROM capture_queue WHERE client_uid='cap-retry'"
+        ).fetchone()["n"]
+        self.assertEqual(rows, 1)
+
+    def test_captured_evidence_cannot_be_deleted(self):
+        offline.accept_capture(self.conn, self.config, client_uid="cap-2",
+                               filename="b.txt", data=b"evidence")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute("DELETE FROM capture_queue")
+
+    def test_failed_capture_ingestion_keeps_the_file(self):
+        """A photograph is never discarded because the pipeline choked on it."""
+        outcome = offline.accept_capture(
+            self.conn, self.config, client_uid="cap-3",
+            filename="weird.xlsx", data=b"\x00\x01 not a spreadsheet at all")
+        row = self.conn.execute("SELECT * FROM capture_queue WHERE client_uid='cap-3'"
+                                ).fetchone()
+        self.assertIsNotNone(row["stored_path"])
+        self.assertTrue(Path(row["stored_path"]).exists())
+        self.assertIn(outcome["state"], ("INGESTED", "FAILED", "DUPLICATE"))
+
+    def test_invalid_pin_reason_is_refused(self):
+        result = ingest_path(self.config, self.conn, self.paths["psc_complaint"])
+        with self.assertRaises(ValueError):
+            offline.pin(self.conn, result.document_id, reason="WHENEVER")
 
 
 if __name__ == "__main__":
