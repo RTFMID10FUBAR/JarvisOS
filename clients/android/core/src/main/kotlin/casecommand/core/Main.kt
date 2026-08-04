@@ -130,12 +130,18 @@ fun main(args: Array<String>) {
         val revoke: ((String) -> Unit)? = template?.let { command ->
             { uid: String ->
                 val argv = command.replace("{uid}", uid).split(" ").filter { it.isNotEmpty() }
-                val exit = ProcessBuilder(argv).redirectErrorStream(true)
-                    .start().let { process ->
-                        process.inputStream.readBytes()
-                        process.waitFor()
-                    }
-                if (exit != 0) println("  (revoke command exited $exit)")
+                val process = ProcessBuilder(argv).redirectErrorStream(true).start()
+                val output = process.inputStream.readBytes().toString(Charsets.UTF_8).trim()
+                val exit = process.waitFor()
+                // Throw rather than warn. A revoke that silently did nothing
+                // leaves the rule reporting "sync still worked after
+                // revocation", which blames the client for the harness's own
+                // failure — the exact kind of unsourced claim this system is
+                // built to refuse.
+                if (exit != 0) {
+                    throw IllegalStateException(
+                        "revoke command exited $exit: ${output.take(300)}")
+                }
             }
         }
         val report = conformance(args[0], args[1], HttpTransport(), revoke)

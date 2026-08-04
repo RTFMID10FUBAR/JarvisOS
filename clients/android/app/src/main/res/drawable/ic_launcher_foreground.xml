@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A document with its corner turned and a mark against it: the whole system
+     in one shape — a record, and whether anything stands behind it. Drawn as a
+     vector so there are no density buckets to keep in sync and no binary asset
+     in the repository. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Sheet, with the top-right corner folded away. -->
+    <path
+        android:fillColor="#E6EDF7"
+        android:pathData="M38,30 L62,30 L76,44 L76,76 A2,2 0 0,1 74,78 L38,78 A2,2 0 0,1 36,76 L36,32 A2,2 0 0,1 38,30 Z" />
+    <!-- The fold itself. -->
+    <path
+        android:fillColor="#8A9AB2"
+        android:pathData="M62,30 L76,44 L64,44 A2,2 0 0,1 62,42 Z" />
+
+    <!-- Two lines of text. -->
+    <path
+        android:fillColor="#0B111C"
+        android:pathData="M43,54 L69,54 L69,57 L43,57 Z" />
+    <path
+        android:fillColor="#0B111C"
+        android:pathData="M43,61 L61,61 L61,64 L43,64 Z" />
+
+    <!-- The mark. Green because it means "this one has a source", which is the
+         only kind of good news this system reports. -->
+    <path
+        android:fillColor="#4A9D6B"
+        android:pathData="M56,69 L60,73 L69,64 L72,67 L60,79 L53,72 Z" />
+</vector>

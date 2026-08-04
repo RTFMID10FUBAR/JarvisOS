@@ -79,6 +79,12 @@ jobs:
 
       - name: Self test and the twelve conformance rules
         working-directory: clients/android
+        # Gradle runs the harness with clients/android as the working
+        # directory, so `python3 -m case_command` could not find the package
+        # when the harness shelled out to revoke the device. PYTHONPATH makes
+        # the import work regardless of where it is invoked from.
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           set -eux
           R="${RUNNER_TEMP}/case"

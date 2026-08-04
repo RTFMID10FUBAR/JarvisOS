@@ -187,7 +187,15 @@ fun conformance(
     // 12. revocation is surfaced, never silently retried
     val deviceUid = paired["device_uid"].asString()
     if (revoke != null && deviceUid != null) {
-        revoke(deviceUid)
+        // If revocation itself fails, say so. Letting it fall through would
+        // make the client look broken for a failure that happened before the
+        // client was even asked anything.
+        val revoked = runCatching { revoke(deviceUid) }
+        if (revoked.isFailure) {
+            record("revocation-surfaces", false,
+                "not exercised — ${revoked.exceptionOrNull()?.message}")
+            return ConformanceReport(fillMissing(results))
+        }
         try {
             client.sync()
             record("revocation-surfaces", false, "sync still worked after revocation")
