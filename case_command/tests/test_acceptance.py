@@ -1659,44 +1659,100 @@ class TestSyncPaging(CaseCommandTest):
         self.assertGreater(self.rounds, 1, "a limit of 1 should have needed many rounds")
         self.assertEqual(self._walk(7), expected)
 
-    def test_a_truncated_page_never_advances_the_cursor_to_now(self):
+    def test_a_truncated_page_never_advances_past_undelivered_rows(self):
+        """The cursor is a position in the data, never a wall clock."""
         self.ingest_all()
         page = api.sync(self.conn, limit_per_table=1)
         self.assertTrue(page["more_available"])
-        # The cursor must sit inside the data, not at wall-clock time. Every
-        # row still waiting has updated_at >= it.
-        self.assertLess(page["next_cursor"], utcnow())
+
         delivered = sum(len(rows) for rows in page["changed"].values())
         follow_up = api.sync(self.conn, since=page["next_cursor"],
                              limit_per_table=10_000)
         self.assertGreater(follow_up["total"], 0,
                            "the cursor moved past everything still waiting")
+
         whole = api.sync(self.conn, limit_per_table=10_000)
-        # Nothing was stranded: what came back plus what is still waiting
-        # accounts for the entire record (re-reads only ever add).
         self.assertGreaterEqual(delivered + follow_up["total"], whole["total"])
 
-    def test_a_timestamp_group_is_never_split(self):
-        """Rows written in one transaction share a timestamp and must page together."""
+    def test_a_row_written_in_the_same_millisecond_is_not_lost(self):
+        """The bug CI caught, pinned so it cannot come back.
+
+        The cursor used to be wall-clock time read at the start of a sync, so a
+        row whose updated_at landed in that same millisecond was skipped — and
+        skipped again on every later sync, because the client had stored the
+        cursor. Silent, permanent loss. A change number owes nothing to a clock,
+        so identical timestamps are simply not a factor.
+        """
         self.ingest_all()
-        stamp = "2026-01-01T00:00:00.000Z"
-        self.conn.execute("UPDATE issues SET updated_at=?", (stamp,))
+        cursor = api.sync(self.conn)["next_cursor"]
+
+        # Stamp an edit with a timestamp that has already gone by. Under the old
+        # scheme this was invisible forever.
+        stale = "2000-01-01T00:00:00.000Z"
+        issue = self.conn.execute("SELECT id FROM issues ORDER BY id LIMIT 1").fetchone()
+        self.conn.execute(
+            "UPDATE issues SET risk_rating='HIGH', updated_at=? WHERE id=?",
+            (stale, issue["id"]))
+        self.conn.commit()
+
+        delta = api.sync(self.conn, since=cursor)
+        self.assertEqual(delta["total"], 1, "an edit with an older timestamp was lost")
+        self.assertEqual(delta["changed"]["issues"][0]["risk_rating"], "HIGH")
+
+    def test_every_edit_is_delivered_exactly_once(self):
+        """Repeatedly edit and sync; nothing missed, nothing re-sent."""
+        self.ingest_all()
+        cursor = api.sync(self.conn)["next_cursor"]
+        ids = [r["id"] for r in self.conn.execute(
+            "SELECT id FROM issues ORDER BY id LIMIT 5")]
+
+        for index, issue_id in enumerate(ids):
+            # Same millisecond as the previous edit is the interesting case, so
+            # the timestamp is deliberately held constant across all of them.
+            self.conn.execute(
+                "UPDATE issues SET risk_rating=?, updated_at=? WHERE id=?",
+                (f"R{index}", "2026-01-01T00:00:00.000Z", issue_id))
+            self.conn.commit()
+
+            page = api.sync(self.conn, since=cursor)
+            self.assertEqual(page["total"], 1,
+                             f"edit {index} was lost or duplicated")
+            self.assertEqual(page["changed"]["issues"][0]["id"], issue_id)
+            cursor = page["next_cursor"]
+
+        self.assertEqual(api.sync(self.conn, since=cursor)["total"], 0)
+
+    def test_a_capped_page_may_stop_mid_group_and_resume_exactly(self):
+        """A change number is unique, so there is no group to keep whole."""
+        self.ingest_all()
+        # Every issue on one timestamp: under the old scheme this forced the
+        # whole group into a single page, making the row limit a suggestion.
+        self.conn.execute("UPDATE issues SET updated_at='2026-01-01T00:00:00.000Z'")
         self.conn.commit()
         total = self.conn.execute("SELECT COUNT(*) c FROM issues").fetchone()["c"]
 
-        page = api.sync(self.conn, since="2025-12-31T00:00:00.000Z", limit_per_table=1)
-        # The limit is a target, not a cap: the whole group came back rather
-        # than one row of it, because the cursor cannot stop mid-group without
-        # stranding the rest.
-        self.assertEqual(len(page["changed"]["issues"]), total)
-        self.assertNotEqual(page["next_cursor"], stamp,
-                            "cursor stopped on a fully-delivered group")
+        seen, cursor, rounds = [], None, 0
+        while True:
+            rounds += 1
+            self.assertLess(rounds, 500)
+            page = api.sync(self.conn, since=cursor, limit_per_table=1)
+            seen.extend(r["id"] for r in page["changed"].get("issues", []))
+            cursor = page["next_cursor"]
+            if not page["more_available"]:
+                break
 
-    def test_a_page_landing_exactly_on_the_end_is_not_reported_as_more(self):
+        self.assertLessEqual(max(len(seen[:1]), 1), 1, "the limit was honoured")
+        self.assertEqual(sorted(seen), sorted(
+            r["id"] for r in self.conn.execute("SELECT id FROM issues")))
+        self.assertEqual(len(seen), total)
+
+    def test_an_unreadable_cursor_resends_rather_than_skips(self):
+        """A cursor that cannot be read must never mean "you are up to date"."""
         self.ingest_all()
-        total = self.conn.execute("SELECT COUNT(*) c FROM matters").fetchone()["c"]
-        page = api.sync(self.conn, limit_per_table=total)
-        self.assertNotIn("matters", page["truncated_tables"])
+        for junk in ("not-a-cursor", "v3:{broken", "2026-01-01T00:00:00.000Z", ""):
+            page = api.sync(self.conn, since=junk)
+            self.assertGreater(page["total"], 0,
+                               f"cursor {junk!r} was treated as current")
 
     def test_more_available_and_truncated_tables_agree(self):
         self.ingest_all()

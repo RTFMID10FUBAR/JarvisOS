@@ -160,43 +160,43 @@ def list_devices(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 #: connection.
 SYNC_TABLES: dict[str, str] = {
     "matters": """
-        SELECT id, slug, title, caption, case_number, forum, posture, status,
+        SELECT change_seq, id, slug, title, caption, case_number, forum, posture, status,
                boundary_date, boundary_label, updated_at
         FROM matters WHERE updated_at > ?
     """,
     "documents": """
-        SELECT id, doc_uid, matter_id, title, original_filename, folder,
+        SELECT change_seq, id, doc_uid, matter_id, title, original_filename, folder,
                document_date, date_source, extract_line, extract_locator,
                text_method, text_confidence, ocr_used, page_count, byte_size,
                sha256, verification_status, triage_status, updated_at
         FROM documents WHERE updated_at > ? AND status='ACTIVE'
     """,
     "issues": """
-        SELECT id, matter_id, issue_key, title, status, verification_status,
+        SELECT change_seq, id, matter_id, issue_key, title, status, verification_status,
                boundary_classification, hearing_scope, legal_element,
                requested_finding, requested_relief, missing_proof,
                appeal_standard, risk_rating, updated_at
         FROM issues WHERE updated_at > ?
     """,
     "deadlines": """
-        SELECT id, matter_id, issue_id, title, due_date, deadline_type,
+        SELECT change_seq, id, matter_id, issue_id, title, due_date, deadline_type,
                trigger_event, days_allowed, satisfied, verification_status,
                notes, updated_at
         FROM deadlines WHERE updated_at > ? AND status='ACTIVE'
     """,
     "events": """
-        SELECT id, matter_id, title, event_date, event_type, legal_significance,
+        SELECT change_seq, id, matter_id, title, event_date, event_type, legal_significance,
                boundary_classification, disputed, verification_status, updated_at
         FROM events WHERE updated_at > ? AND status='ACTIVE'
     """,
     "preservation_items": """
-        SELECT id, matter_id, issue_id, title, raised, where_raised, date_raised,
+        SELECT change_seq, id, matter_id, issue_id, title, raised, where_raised, date_raised,
                ruling_requested, ruling_issued, ignored, exception_required,
                exception_filed, appeal_deadline, standard_of_review, risk, updated_at
         FROM preservation_items WHERE updated_at > ? AND status='ACTIVE'
     """,
     "access_barriers": """
-        SELECT id, matter_id, title, incident_date, barrier_type, what_was_blocked,
+        SELECT change_seq, id, matter_id, title, incident_date, barrier_type, what_was_blocked,
                deadline_affected, deadline_date, reported_to_tribunal,
                verification_status, updated_at
         FROM access_barriers WHERE updated_at > ? AND status='ACTIVE'
@@ -213,86 +213,104 @@ EPOCH = "1970-01-01T00:00:00.000Z"
 DEFAULT_SYNC_LIMIT = 500
 MAX_SYNC_LIMIT = 2000
 
+#: Cursors are opaque to clients; both the Python and Kotlin clients store and
+#: return them without looking inside. The prefix lets an older bare-timestamp
+#: cursor still be recognised and safely discarded.
+CURSOR_PREFIX = "v3:"
+
+
+def _keyed(query: str) -> str:
+    """Swap a replicated query's timestamp test for the change-number test."""
+    assert "updated_at > ?" in query, query
+    return query.replace("updated_at > ?", "change_seq > ?", 1)
+
+
+def _parse_cursor(since: str | None) -> dict[str, int]:
+    """Read a cursor into a per-table change number."""
+    if not since:
+        return {}
+    if since.startswith(CURSOR_PREFIX):
+        try:
+            return {table: int(seq)
+                    for table, seq in json.loads(since[len(CURSOR_PREFIX):]).items()}
+        except (ValueError, TypeError, AttributeError):
+            return {}
+    # A cursor from an older build was a timestamp, which cannot be mapped onto
+    # a change number. Start over rather than guess: re-sending rows the client
+    # already has is absorbed by its upsert, and guessing would lose them.
+    return {}
+
+
+def _encode_cursor(positions: dict[str, int]) -> str:
+    return CURSOR_PREFIX + json.dumps(dict(sorted(positions.items())),
+                                      separators=(",", ":"))
+
 
 def sync(conn: sqlite3.Connection, *, since: str | None = None,
          device: sqlite3.Row | None = None,
          limit_per_table: int = DEFAULT_SYNC_LIMIT) -> dict[str, Any]:
     """Everything that changed after *since*.
 
-    The cursor is a timestamp, and where it lands is the whole correctness
-    argument for this function.
+    Where the cursor lands is the whole correctness argument here, and the first
+    two attempts at it were both wrong the same way.
 
-    When nothing was truncated the cursor is wall-clock time read *before* the
-    queries ran, so a row written mid-sync is picked up next time rather than
-    falling into the gap between the query and the answer.
+    It was wall-clock time read at the start of a sync, which loses any row
+    written in that same millisecond: the test is strictly greater-than, so the
+    row is skipped, and because the client stores the cursor it is skipped again
+    on every later sync. Not an error — a permanent, silent hole. CI caught it.
 
-    When a page was truncated the cursor must instead be a position inside the
-    data, because wall-clock time would carry the client past every row it has
-    not yet seen — and a client that has moved its cursor past a row will never
-    ask for that row again. It would not fail; it would report success while
-    silently holding an incomplete record. For a system whose entire purpose is
-    that no document goes missing, that is the worst available outcome, so the
-    truncated case takes the earliest timestamp any capped table stopped at.
-    Tables that were already exhausted get re-read on the next round. Re-reading
-    is free — the client upserts by primary key — and it is the correct thing to
-    trade away.
+    Making the cursor carry (updated_at, id) helped and was still not exact. An
+    UPDATE moves a row to a new position; if that position shares a millisecond
+    with the last row already delivered but has a lower id, it sorts behind the
+    cursor and is never sent.
 
-    Truncation never splits a group of rows sharing one timestamp. Rows written
-    in a single transaction have identical `updated_at`, and advancing past a
-    timestamp whose group was only half-read would lose the other half. A page
-    that ends mid-group is extended to the end of that group, so the row limit
-    is a target rather than a hard cap.
+    Both have one root: a millisecond timestamp is not a unique, monotonic
+    position, so no choice of *which* timestamp can make it one. The cursor is
+    now `change_seq` — a counter bumped by a trigger on every insert and update,
+    never reused, never going backwards, owing nothing to a clock. `change_seq >
+    cursor` is exact. A row is passed over only once it has genuinely been
+    handed to the client, and a table that returned nothing keeps its position.
+
+    Because the position is exact, a capped page can stop anywhere and resume
+    exactly there — no keeping timestamp groups whole, and the row limit is a
+    real limit.
     """
     limit = max(1, int(limit_per_table))
-    cursor = since or EPOCH
-    wall_clock = utcnow()
+    positions = _parse_cursor(since)
 
     changed: dict[str, list[dict[str, Any]]] = {}
     counts: dict[str, int] = {}
-    stopped_at: dict[str, str] = {}
+    next_positions: dict[str, int] = dict(positions)
+    truncated: list[str] = []
 
     for table, query in SYNC_TABLES.items():
+        last = positions.get(table, 0)
         rows = [dict(r) for r in conn.execute(
-            f"{query} ORDER BY updated_at, id LIMIT {limit}", (cursor,))]
-
-        if len(rows) == limit:
-            # The page ended somewhere. Pull in the rest of the final
-            # timestamp's group so the cursor can move past it safely.
-            edge = rows[-1]["updated_at"]
-            rows.extend(dict(r) for r in conn.execute(
-                f"{query} AND updated_at = ? AND id > ? ORDER BY id",
-                (cursor, edge, rows[-1]["id"])))
-            # Only report more waiting if something actually is. A page that
-            # happens to land exactly on the end of the data is finished, and
-            # saying otherwise costs the client a pointless round trip.
-            if conn.execute(f"{query} AND updated_at > ? LIMIT 1",
-                            (cursor, edge)).fetchone() is not None:
-                stopped_at[table] = edge
+            f"{_keyed(query)} ORDER BY change_seq LIMIT {limit}", (last,))]
 
         if rows:
             changed[table] = rows
+            next_positions[table] = int(rows[-1]["change_seq"])
         counts[table] = len(rows)
-
-    truncated = sorted(stopped_at)
-    # Earliest stopping point wins: no capped table may be skipped past.
-    next_cursor = min(stopped_at.values()) if stopped_at else wall_clock
+        if len(rows) >= limit:
+            truncated.append(table)
 
     if device is not None:
         conn.execute(
             "UPDATE devices SET last_sync_cursor=?, sync_count=sync_count+1 WHERE id=?",
-            (next_cursor, device["id"]))
+            (_encode_cursor(next_positions), device["id"]))
 
     return {
         "api_version": API_VERSION,
-        "cursor": cursor,
-        "next_cursor": next_cursor,
+        "cursor": since,
+        "next_cursor": _encode_cursor(next_positions),
         "changed": changed,
         "counts": counts,
         "total": sum(counts.values()),
-        # If a table hit the cap there is more waiting. Say so rather than
+        # If a table filled its page there is more waiting. Say so rather than
         # letting the client believe it is up to date.
         "more_available": bool(truncated),
-        "truncated_tables": truncated,
+        "truncated_tables": sorted(truncated),
         "full_sync": since is None,
     }
 

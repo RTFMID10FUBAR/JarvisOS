@@ -144,6 +144,10 @@ def connect(config: Config, *, readonly: bool = False) -> sqlite3.Connection:
     if not readonly:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = FULL")
+    # The change_seq triggers update the row they fired on. With recursive
+    # triggers that would loop forever. It is off by default in SQLite, and set
+    # explicitly here so the migration does not depend on a default staying put.
+    conn.execute("PRAGMA recursive_triggers = OFF")
     return conn
 
 
