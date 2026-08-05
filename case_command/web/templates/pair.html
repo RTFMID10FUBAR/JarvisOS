@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Pair a device{% endblock %}
+{% block heading %}Pair a device{% endblock %}
+{% block content %}
+
+<section class="panel">
+  <header><b>Open this page on the phone</b></header>
+  <div class="panel-body">
+    <p class="sub">
+      Reachable from the phone means reachable, full stop — the address you used
+      to load this page is the address the app will use, so there is nothing to
+      type and nothing to guess. Both devices need to be on the same network.
+    </p>
+    <p><b>This server, as the phone sees it:</b> <code class="pair-host">{{ host }}</code></p>
+
+    {% if not code %}
+      <form method="post" action="/pair">
+        <button class="primary" type="submit">Create a pairing code</button>
+      </form>
+      <p class="sub">
+        A code is made only when you ask for one. It works once and expires in
+        ten minutes, so a page left open in a tab is not a way in.
+      </p>
+    {% else %}
+      <p>
+        <a class="pair-link"
+           href="casecommand://pair?host={{ host | urlencode }}&amp;code={{ code }}">
+          Open Case Command and pair this phone
+        </a>
+      </p>
+      <p class="sub">
+        Tap that <b>on the phone</b> and the app opens already paired. The
+        Android app has no field to type a code into, by design — the link
+        carries the address and the code, and opening it is the whole gesture.
+        If nothing happens, the app is not installed on the device you are
+        reading this on.
+      </p>
+
+      <details class="pair-issued">
+        <summary>The code this link carries</summary>
+        <div class="pair-code">{{ code }}</div>
+        <p class="sub">
+          Single use, expires in {{ ttl }} minutes. Shown so you can see what
+          was issued and match it against the Paired devices list. The Android
+          app cannot accept it typed; the desktop reference client and
+          <code>case-command conform</code> can.
+        </p>
+      </details>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  <header><b>Paired devices</b><span class="spacer"></span>
+    <span class="chip">{{ devices | length }}</span></header>
+  {% if devices %}
+  <table class="tbl">
+    <thead><tr><th>Device</th><th>Platform</th><th>State</th><th>Synced</th><th>Last seen</th></tr></thead>
+    <tbody>
+      {% for d in devices %}
+      <tr>
+        <td>{{ d.label }}<div class="sub">{{ d.device_uid[:12] }}</div></td>
+        <td>{{ d.platform or '—' }}</td>
+        <td>{% if d.revoked %}<span class="chip danger">revoked</span>
+            {% else %}<span class="chip ok">active</span>{% endif %}</td>
+        <td>{{ d.sync_count }}×</td>
+        <td>{{ (d.last_seen_at or 'never')[:16] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="panel-body"><p class="muted">No device is paired yet.</p></div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block inspector_title %}How pairing works{% endblock %}
+{% block inspector %}
+  <div class="ins-card"><h4>Once per device</h4>
+    <p>The phone keeps a token afterwards and never asks again. If it asks
+       again, something removed that token — reinstalling the app does, because
+       it wipes the app's data.</p></div>
+
+  <div class="ins-card good"><h4>The token is never stored here</h4>
+    <p>Only a SHA-256 of it, plus the first eight characters so the device is
+       identifiable in the list above. A copied database yields no working
+       credential.</p></div>
+
+  <div class="ins-card warn"><h4>Revoked, never deleted</h4>
+    <p>A lost phone is revoked from the desktop. The row stays, because what
+       that device was carrying is a fact worth keeping.</p></div>
+
+  <div class="ins-card"><h4>Nothing leaves the network</h4>
+    <p>The phone talks to this machine and nothing else. No cloud, no account,
+       and the app cannot file or send anything to a tribunal.</p></div>
+{% endblock %}

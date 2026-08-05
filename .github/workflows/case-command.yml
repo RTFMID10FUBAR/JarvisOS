@@ -1,0 +1,259 @@
+name: Case Command
+
+# Runs the checks that can be run anywhere, plus the one that cannot be run in
+# the development container: building the Android APK. `dl.google.com` is
+# blocked by that environment's network policy, so there is no Android SDK and
+# no Google Maven there. A GitHub runner has both, which makes this the first
+# place an APK actually exists rather than being asserted.
+
+on:
+  push:
+    branches: ["claude/case-command-**"]
+    paths:
+      - "case_command/**"
+      - "clients/android/**"
+      - ".github/workflows/case-command.yml"
+  pull_request:
+    paths:
+      - "case_command/**"
+      - "clients/android/**"
+      - ".github/workflows/case-command.yml"
+  workflow_dispatch:
+
+# A push to a branch that has an open PR fires both triggers, which ran the
+# whole thing twice — including two APK builds. Grouping by ref and cancelling
+# the older run keeps one.
+concurrency:
+  group: case-command-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    # No count in the name. It was "157 acceptance tests" while the suite ran
+    # 164, because a number written by hand in one place goes stale the first
+    # time somebody adds a test — and a check whose label is wrong is a small
+    # lesson that labels here need not be true.
+    name: Python — acceptance tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The core is stdlib only. Jinja2 is needed for the web UI tests, and
+      # nothing else is installed on purpose — if this list ever grows, the
+      # "zero required third-party dependencies" claim has quietly stopped
+      # being true.
+      - run: pip install jinja2
+
+      - name: Acceptance tests
+        run: python3 -m unittest case_command.tests.test_acceptance -v
+
+  kotlin-core:
+    name: Kotlin core — self test + 12 conformance rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install jinja2
+
+      - name: Build a fixture record and start the server
+        run: |
+          set -eux
+          R="${RUNNER_TEMP}/case"
+          python3 clients/android/tools/ci-fixture.py "$R"
+          nohup python3 -m case_command --data-root "$R" serve --port 8787 \
+            > "${RUNNER_TEMP}/server.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null http://127.0.0.1:8787/api/v1/; then break; fi
+            sleep 1
+          done
+          curl -sf -o /dev/null -w 'server %{http_code}\n' http://127.0.0.1:8787/api/v1/
+
+      - name: Self test and the twelve conformance rules
+        working-directory: clients/android
+        # Gradle runs the harness with clients/android as the working
+        # directory, so `python3 -m case_command` could not find the package
+        # when the harness shelled out to revoke the device. PYTHONPATH makes
+        # the import work regardless of where it is invoked from.
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set -eux
+          R="${RUNNER_TEMP}/case"
+          CODE=$(cd "${GITHUB_WORKSPACE}" && python3 -m case_command --data-root "$R" device pair \
+                 | grep -oE '\b[A-HJ-NP-Z2-9]{6}\b' | head -1)
+          # Revocation is driven by the desktop command because a device must
+          # not be able to revoke itself. Without it the rule reports "not run"
+          # rather than quietly passing.
+          ./gradlew :core:selfTest --no-daemon --args="http://127.0.0.1:8787 $CODE python3 -m case_command --data-root $R device revoke --device-uid {uid} --reason ci"
+
+      - name: Server log on failure
+        if: failure()
+        run: cat "${RUNNER_TEMP}/server.log" || true
+
+  apk:
+    name: Android APK
+    runs-on: ubuntu-latest
+    # Needed to publish the APK as a release asset. An Actions artifact is a
+    # zip behind an authenticated API, which a phone cannot fetch — the GitHub
+    # mobile app shows its name and lets you copy the digest and nothing else.
+    # A release asset is an ordinary URL that downloads on a phone.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Protocol first
+        working-directory: clients/android
+        run: ./gradlew :core:build --no-daemon
+
+      # Without a stable key, Gradle generates a throwaway one per build and
+      # every install becomes an uninstall — wiping the device's copy of the
+      # record and its pairing. See clients/android/README.md to set the secret.
+      - name: Unpack the stable signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -eu
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            echo "::warning title=No stable signing key::ANDROID_KEYSTORE_BASE64 is not set. This build gets a throwaway key, so it cannot be installed over the previous build without uninstalling first — which wipes the record on the device and requires pairing again."
+            exit 0
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "${RUNNER_TEMP}/casecommand.jks"
+          {
+            echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/casecommand.jks"
+            echo "ANDROID_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+            echo "ANDROID_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}"
+          } >> "$GITHUB_ENV"
+          echo "signing with the stable key"
+
+      # This is the step that cannot happen in the development container. If it
+      # goes green there is a real APK attached to this run; if it goes red the
+      # errors are real errors, which is the point of running it at all rather
+      # than claiming the app builds.
+      - name: Assemble debug APK
+        working-directory: clients/android
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      # The check that would have caught this the first time. Prints the signer
+      # certificate every build, and fails if it differs from the recorded one.
+      - name: Signing key
+        working-directory: clients/android
+        run: |
+          set -eu
+          APK=$(find app/build/outputs -name '*.apk' | head -1)
+          if [ -f signing-key.sha256 ]; then
+            python3 tools/apk-signer.py "$APK" "$(cat signing-key.sha256)"
+          else
+            python3 tools/apk-signer.py "$APK"
+            echo "::notice title=Signing key not pinned::No clients/android/signing-key.sha256 on record, so a changed key cannot be detected. Commit the fingerprint printed above once the stable key is in use."
+          fi
+
+      - name: Name it, size it, hash it
+        id: apk
+        working-directory: clients/android
+        run: |
+          set -eux
+          BUILT=$(find app/build/outputs -name '*.apk' | head -1)
+          # A stable, meaningful filename. The default is app-debug.apk, which
+          # tells you nothing sitting in a phone's Downloads folder next to
+          # four other app-debug.apk files.
+          cp "$BUILT" "${RUNNER_TEMP}/case-command-debug.apk"
+          ls -lh "${RUNNER_TEMP}/case-command-debug.apk"
+          SHA=$(sha256sum "${RUNNER_TEMP}/case-command-debug.apk" | cut -d" " -f1)
+          SIZE=$(stat -c%s "${RUNNER_TEMP}/case-command-debug.apk")
+          echo "sha=$SHA"   >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+
+      # Kept for desktop downloads.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: case-command-debug-apk
+          path: ${{ runner.temp }}/case-command-debug.apk
+          if-no-files-found: error
+
+      # The copy a phone can actually open. Fixed tag, asset clobbered each
+      # build, so the download URL never changes. Push only, so a PR run does
+      # not churn the release.
+      - name: Publish a download a phone can open
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK_SHA: ${{ steps.apk.outputs.sha }}
+          APK_SIZE: ${{ steps.apk.outputs.size }}
+        run: |
+          set -eux
+          # Notes are written line by line rather than with a heredoc. A
+          # heredoc nested in a YAML block scalar is two layers of significant
+          # whitespace, and it already broke this workflow once.
+          NOTES="${RUNNER_TEMP}/notes.md"
+          {
+            echo "Debug build of the Case Command Android client, built by CI"
+            echo "from \`${GITHUB_SHA}\`."
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| size | ${APK_SIZE} bytes |"
+            echo "| sha256 | \`${APK_SHA}\` |"
+            echo
+            echo "**Debug-signed.** Android will warn about an unknown source."
+            echo "That is expected for a build that did not come from the Play"
+            echo "Store. Verify the digest above if you care to."
+            echo
+            echo "**This APK has never been run on a device.** CI proves it"
+            echo "compiles, links, packages and signs. It does not prove that"
+            echo "any screen renders correctly."
+            echo
+            echo "### Pairing"
+            echo
+            echo "Start the desktop, open **Pair a device** in the left rail,"
+            echo "then open that same page **on the phone** and tap the link."
+            echo "The address and code come across with it and the app opens"
+            echo "already paired. Both devices have to be on the same network."
+            echo
+            echo "There is no code field in the app — it was removed, not"
+            echo "hidden. Opening the link is the whole gesture. If a link"
+            echo "fails, make a new code and tap the new link; a code works"
+            echo "once and expires after ten minutes."
+            echo
+            echo "### If it will not install over the last one"
+            echo
+            echo "Uninstall the old one first. Until a stable signing key is"
+            echo "in use, CI signs every build with a fresh throwaway key, and"
+            echo "Android refuses to install an update signed by a different"
+            echo "key. Uninstalling wipes the app's data, so the phone has to"
+            echo "pair again — which is the part tapping a link makes cheap."
+            echo
+            echo "It talks to one machine on your local network — the Case"
+            echo "Command desktop. No cloud, no account, and it cannot file,"
+            echo "serve, or send anything to a tribunal."
+          } > "$NOTES"
+
+          gh release create android-debug \
+            --prerelease \
+            --title "Case Command — Android debug APK" \
+            --notes-file "$NOTES" || true
+          gh release edit android-debug --notes-file "$NOTES"
+          gh release upload android-debug \
+            "${RUNNER_TEMP}/case-command-debug.apk" --clobber
+
+          echo "Download: https://github.com/${GITHUB_REPOSITORY}/releases/download/android-debug/case-command-debug.apk"

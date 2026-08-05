@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The only permission this app needs. It talks to one machine on the
+         local network — the one holding the record. No cloud, no account, no
+         analytics, no third party ever holds the case. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Cleartext to a private address only. The server binds to localhost or a
+         LAN address and is reached over the local network; there is no public
+         endpoint to secure and no certificate to obtain for one.
+
+         This belongs on <application>. It sat on <activity> below, where the
+         attribute is not declared and is silently dropped — and since targetSdk
+         28 the default is to refuse cleartext, so every request to the LAN
+         server would have failed with "CLEARTEXT communication not permitted".
+         Nothing catches that at build time: the manifest compiles either way,
+         and the app is only wrong once it is running on a phone. -->
+    <application
+        android:label="Case Command"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.CaseCommand">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Tap-to-pair. The desktop's /pair page, opened on the phone,
+                 offers a link carrying the address the phone just used to load
+                 that page and a single-use code. Tapping it lands here with
+                 both already filled in, so nothing is read across a room and
+                 retyped.
+
+                 A custom scheme rather than an https link on purpose: an https
+                 link needs a domain to verify against, and this system has no
+                 domain and no server on the internet. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="casecommand" android:host="pair" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

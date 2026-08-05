@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Matters — Case Command{% endblock %}
+{% block content %}
+<h1>Matters</h1>
+<p class="sub">{{ prompt or "Every matter is kept separate. Related matters are linked, never merged." }}</p>
+<div class="table-wrap">
+<table>
+  <tr><th>Matter</th><th>Caption</th><th>Case number</th><th>Forum</th><th>Posture</th>
+      <th>Boundary</th><th>Issues</th><th>Views</th></tr>
+  {% for m in matters %}
+  <tr>
+    <td><a href="/matter?id={{ m.id }}">{{ m.title }}</a></td>
+    <td>{{ m.caption or '—' }}</td>
+    <td>{{ m.case_number or '—' }}</td>
+    <td>{{ m.forum or '—' }}</td>
+    <td>{{ m.posture or '—' }}</td>
+    <td>{{ m.boundary_date or '—' }}</td>
+    <td>{{ m.active_issue_count }}/{{ m.issue_count }}</td>
+    <td><a href="/hearing?matter_id={{ m.id }}">hearing</a> ·
+        <a href="/issues?matter_id={{ m.id }}">issues</a> ·
+        <a href="/timeline?matter_id={{ m.id }}">timeline</a></td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}

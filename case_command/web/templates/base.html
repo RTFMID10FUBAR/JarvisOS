@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Case Command{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="shell">
+
+  <aside class="rail">
+    <a class="rail-brand" href="/">
+      <span class="rail-mark">CC</span>
+      <span>
+        <span class="rail-name">Case Command</span>
+        <span class="rail-sub">Litigation Record</span>
+      </span>
+    </a>
+
+    <nav>
+      <a href="/" class="{{ 'on' if nav_active == 'dashboard' }}">
+        <span class="ico">◧</span> Command Center</a>
+      <a href="/matter" class="{{ 'on' if nav_active == 'matters' }}">
+        <span class="ico">▤</span> Matters</a>
+      <a href="/timeline" class="{{ 'on' if nav_active == 'timeline' }}">
+        <span class="ico">◔</span> Timeline</a>
+
+      <div class="rail-group">Record</div>
+      <a href="/triage" class="{{ 'on' if nav_active == 'triage' }}">
+        <span class="ico">▦</span> Documents
+        {% if nav_counts and nav_counts.unreviewed %}<span class="count">{{ nav_counts.unreviewed }}</span>{% endif %}</a>
+      <a href="/issues" class="{{ 'on' if nav_active == 'issues' }}">
+        <span class="ico">◈</span> Issue Matrix</a>
+      <a href="/atlas" class="{{ 'on' if nav_active == 'atlas' }}">
+        <span class="ico">⌘</span> Path Atlas</a>
+      <a href="/compare" class="{{ 'on' if nav_active == 'compare' }}">
+        <span class="ico">⇄</span> Compare</a>
+
+      <div class="rail-group">Act</div>
+      <a href="/filing" class="{{ 'on' if nav_active == 'filing' }}">
+        <span class="ico">▣</span> Filing Studio</a>
+      <a href="/hearing" class="{{ 'on' if nav_active == 'hearing' }}">
+        <span class="ico">⚖</span> Hearing Mode</a>
+      <a href="/preservation" class="{{ 'on' if nav_active == 'preservation' }}">
+        <span class="ico">⚑</span> Preservation</a>
+      <a href="/access" class="{{ 'on' if nav_active == 'access' }}">
+        <span class="ico">⛔</span> Access Log</a>
+
+      <div class="rail-group">Review</div>
+      <a href="/approvals" class="{{ 'on' if nav_active == 'approvals' }}">
+        <span class="ico">✓</span> Approvals
+        {% if nav_counts and nav_counts.approvals %}<span class="count">{{ nav_counts.approvals }}</span>{% endif %}</a>
+      <a href="/fleet" class="{{ 'on' if nav_active == 'fleet' }}">
+        <span class="ico">◇</span> Fleet
+        {% if nav_counts and nav_counts.fleet %}<span class="count">{{ nav_counts.fleet }}</span>{% endif %}</a>
+      <a href="/health" class="{{ 'on' if nav_active == 'health' }}">
+        <span class="ico">◉</span> Health</a>
+      <a href="/pair" class="{{ 'on' if nav_active == 'pair' }}">
+        <span class="ico">▢</span> Pair a device</a>
+    </nav>
+
+    <div class="rail-status">
+      <div><span class="dot {{ 'bad' if nav_counts and nav_counts.health == 'FAIL' else 'warn' if nav_counts and nav_counts.health == 'WARN' }}"></span>
+        {% if nav_counts and nav_counts.health %}System {{ nav_counts.health }}{% else %}System{% endif %}</div>
+      <div style="margin-top:.35rem">Data as of<br>{{ now()[:16].replace('T', ' ') }} UTC</div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <h1>{% block heading %}{{ self.title() }}{% endblock %}</h1>
+      <span class="spacer"></span>
+      <span class="live">Live</span>
+      <div class="who"><b>Jacob Kerr</b>Private workspace</div>
+    </header>
+
+    {# A route that defines `inspector` gets a pinned right-hand panel at wide
+       widths. Below 1440px it becomes a disclosure the reader opens, rather
+       than a column squeezing the workspace — an inspector that has crushed
+       the thing it is inspecting is worse than no inspector. #}
+    {% set inspector_html %}{% block inspector %}{% endblock %}{% endset %}
+    {% set has_inspector = inspector_html.strip() | length > 0 %}
+
+    <div class="content {{ 'with-inspector' if has_inspector }}">
+      <div class="workspace">
+        {% block content %}{% endblock %}
+      </div>
+
+      {% if has_inspector %}
+        <details class="inspector" open>
+          <summary>{% block inspector_title %}Context{% endblock %}</summary>
+          <div class="inspector-body">{{ inspector_html }}</div>
+        </details>
+      {% endif %}
+    </div>
+
+    <footer class="foot">
+      Case Command {{ version }} — the canonical litigation record. Fleet proposes;
+      only an approved item enters the record. Nothing here predicts an outcome.
+    </footer>
+  </div>
+</div>
+</body>
+</html>

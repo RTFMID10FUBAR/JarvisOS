@@ -1,0 +1,54 @@
+{% extends "m_base.html" %}
+{% block title %}Dates{% endblock %}
+{% block content %}
+
+<div class="m-note warn">
+  Every interval here is provisional and marked <b>INFERENCE</b>. Confirm each
+  against the governing rule before relying on it. Nothing here is a legal deadline
+  this system verified.
+</div>
+
+{% if overdue %}
+<div class="m-section">Already passed</div>
+<div class="m-list">
+  {% for d in overdue %}
+  <div class="m-row">
+    <div><b>{{ d.title }}</b>
+      <div class="m-sub">{{ d.due_date }} · {{ d.matter_slug or '' }}</div>
+      <div class="m-sub">{{ d.notes or '' }}</div></div>
+    <span class="countdown over" data-countdown="{{ d.due_date }}" style="font-size:15px">—</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="m-section">Upcoming</div>
+<div class="m-list">
+  {% for d in upcoming %}
+  <div class="m-row">
+    <div><b>{{ d.title }}</b>
+      <div class="m-sub">{{ d.due_date }} · {{ d.deadline_type }} · {{ d.matter_slug or '' }}</div>
+      <div class="m-sub">{{ d.notes or '' }}</div></div>
+    <span class="countdown" data-countdown="{{ d.due_date }}" style="font-size:15px">—</span>
+  </div>
+  {% else %}
+  <p class="m-empty">No upcoming deadline in the record.</p>
+  {% endfor %}
+</div>
+
+<div class="m-section">Preservation at risk</div>
+<div class="m-list">
+  {% for r in risks %}
+  <div class="m-row">
+    <div><b>{{ r.issue_key or r.title }}</b>
+      <div class="m-sub">{{ r.issue_title or '' }}</div></div>
+    <span class="m-chip danger">
+      {% if r.ignored and not r.exception_filed %}ignored
+      {% elif r.exception_required and not r.exception_filed %}exception due
+      {% else %}no ruling{% endif %}</span>
+  </div>
+  {% else %}
+  <p class="m-empty">No preservation risk detected.</p>
+  {% endfor %}
+</div>
+{% endblock %}

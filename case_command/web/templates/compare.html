@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Comparison — Case Command{% endblock %}
+{% block content %}
+<h1>Filing and Order Comparison</h1>
+<p class="sub">{{ data.left_label }} versus {{ data.right_label }} —
+   {{ data.difference_count }} difference(s) detected.</p>
+
+<form class="filters" method="get" action="/compare">
+  <label>Mode
+    <select name="mode">
+      {% for key, labels in data.modes.items() %}
+      <option value="{{ key }}" {{ 'selected' if data.mode == key }}>{{ labels[0] }} vs {{ labels[1] }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Matter
+    <select name="matter_id">
+      <option value="">all</option>
+      {% for m in matters %}<option value="{{ m.id }}">{{ m.title }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>{{ data.left_label }}
+    <select name="left">
+      <option value="">—</option>
+      {% for d in data.candidates %}
+      <option value="{{ d.id }}" {{ 'selected' if data.left and data.left.id == d.id }}>{{ d.doc_uid }} {{ d.title[:50] }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>{{ data.right_label }}
+    <select name="right">
+      <option value="">—</option>
+      {% for d in data.candidates %}
+      <option value="{{ d.id }}" {{ 'selected' if data.right and data.right.id == d.id }}>{{ d.doc_uid }} {{ d.title[:50] }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="primary" type="submit">Compare</button>
+</form>
+
+{% if data.differences %}
+<h2>Differences</h2>
+<div class="table-wrap"><table>
+  <tr><th>Type</th><th>{{ data.left_label }}</th><th>{{ data.right_label }}</th></tr>
+  {% for d in data.differences %}
+  <tr>
+    <td><span class="chip {{ 'urgent' if d.type == 'delete' else 'ok' if d.type == 'insert' else 'warn' }}">{{ d.type }}</span></td>
+    <td class="diff-del">{% for line in d.left %}<div>{{ line }}</div>{% else %}—{% endfor %}</td>
+    <td class="diff-add">{% for line in d.right %}<div>{{ line }}</div>{% else %}—{% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% elif data.left or data.right %}
+<div class="banner">No textual differences detected between the selected documents.</div>
+{% else %}
+<div class="banner">Select two documents to compare.</div>
+{% endif %}
+
+<div class="split">
+  <div>
+    <h2>{{ data.left_label }}</h2>
+    {% if data.left %}
+      <div class="sub">{{ data.left.doc_uid }} · {{ data.left.document_date or 'no date' }}
+        · {{ data.left.text_method }}</div>
+      <pre>{{ data.left_text }}</pre>
+    {% else %}<p class="empty">Not selected.</p>{% endif %}
+  </div>
+  <div>
+    <h2>{{ data.right_label }}</h2>
+    {% if data.right %}
+      <div class="sub">{{ data.right.doc_uid }} · {{ data.right.document_date or 'no date' }}
+        · {{ data.right.text_method }}</div>
+      <pre>{{ data.right_text }}</pre>
+    {% else %}<p class="empty">Not selected.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}

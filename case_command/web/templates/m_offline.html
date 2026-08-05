@@ -1,0 +1,39 @@
+{% extends "m_base.html" %}
+{% block title %}Offline{% endblock %}
+{% block content %}
+
+<div class="m-note {{ 'warn' if storage.over_budget }}">
+  <b>{{ storage.pin_count }} document(s) · {{ storage.total_mb }} MB</b><br>
+  Kept readable with no signal. {{ storage.note }}
+</div>
+
+{% if storage.unavailable %}
+<div class="m-note danger">
+  <b>{{ storage.unavailable | length }} pin(s) cannot be honoured</b>
+  {% for u in storage.unavailable %}
+  <div class="m-sub">{{ u.doc_uid }} — {{ u.reason }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="m-section">Saved on this device</div>
+<div class="m-list" data-offline-bundle>
+  <p class="m-empty">Loading…</p>
+</div>
+
+<div class="m-section">Pin a hearing pack</div>
+<div class="m-list">
+  {% for m in matters %}
+  <form method="post" action="/m/pack" style="margin:0">
+    <input type="hidden" name="matter_id" value="{{ m.id }}">
+    <button class="m-row" type="submit" style="width:100%;background:none;border:0;border-bottom:1px solid var(--line);text-align:left;color:inherit;font:inherit">
+      <div><b>{{ m.title }}</b>
+        <div class="m-sub">Pin exhibits, issue support, filings and orders</div></div>
+      <span class="m-chip info">pin</span>
+    </button>
+  </form>
+  {% endfor %}
+</div>
+<p class="m-sub" style="margin-top:.5rem">Exhibits sync first, so the most important
+  material lands even if the connection drops partway.</p>
+{% endblock %}

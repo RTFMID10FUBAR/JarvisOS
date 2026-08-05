@@ -1,0 +1,13 @@
+{% extends "m_base.html" %}
+{% block title %}Offline{% endblock %}
+{% block content %}
+<div class="m-note warn">
+  <b>No connection</b><br>
+  This view was not saved on the device. What was pinned is still readable.
+</div>
+<a class="m-btn" href="/m/offline">Open saved documents</a>
+<div style="height:.6rem"></div>
+<a class="m-btn ghost" href="/m/capture">Capture evidence anyway</a>
+<p class="m-sub" style="margin-top:.8rem">Capture works with no signal. Anything you
+  take now is stored on this device and uploaded when a connection returns.</p>
+{% endblock %}

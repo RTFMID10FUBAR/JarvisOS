@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block title %}Filing Studio{% endblock %}
+{% block heading %}Filing Studio — prepare a filing against the record{% endblock %}
+{% block content %}
+
+<form class="filters" method="get" action="/filing">
+  <label>Matter
+    <select name="matter_id" onchange="this.form.submit()">
+      {% for m in matters %}
+      <option value="{{ m.id }}" {{ 'selected' if data.matter and data.matter.id == m.id }}>{{ m.title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="primary" type="submit">Show</button>
+</form>
+
+{% if not data %}
+  <div class="banner">Choose a matter.</div>
+{% else %}
+
+<div class="banner warn">{{ data.disclaimer }}
+  This screen has no button that files, serves, or sends anything — see
+  <a href="#fs-inspector">Reading this screen</a> below.</div>
+
+{% if data.unproven_count %}
+<div class="banner danger">
+  <strong>{{ data.unproven_count }} filing(s) claim a confirmed status with no proof in the record.</strong>
+  Presence in a folder is never proof of filing. See Status tracker below.
+</div>
+{% endif %}
+
+<!-- ============================================================ 1. path matrix -->
+<section class="panel">
+  <header class="panel-head"><h2>Procedural path matrix</h2>
+    <span class="spacer"></span>
+    <span class="chip ok">{{ data.path_counts.available }} open</span>
+    <span class="chip danger">{{ data.path_counts.blocked }} blocked</span>
+  </header>
+  <div class="panel-body flush table-wrap">
+    <table class="tbl">
+      <thead><tr>
+        <th>Path</th><th>Can be prepared now</th><th>Missing prerequisites</th>
+        <th>Deadline in record</th><th>Preserves</th><th>Authority to confirm</th>
+      </tr></thead>
+      <tbody>
+      {% for p in data.path_matrix %}
+      <tr>
+        <td><strong>{{ p.label }}</strong><div class="sub">{{ p.what_it_does }}</div></td>
+        <td>{% if p.available %}<span class="chip ok">yes</span>
+            {% else %}<span class="chip danger">no</span>{% endif %}</td>
+        <td>
+          {% for b in p.blockers %}<div class="sub missing">✕ {{ b }}</div>
+          {% else %}<span class="sub">none recorded</span>{% endfor %}
+        </td>
+        <td>{% if p.urgency_date %}{{ p.urgency_date }}
+              {% if p.days_left is not none %}<div class="sub">{{ p.days_left }} day(s)</div>{% endif %}
+            {% else %}<span class="muted">no date in the record</span>{% endif %}</td>
+        <td>{{ p.preserves or '—' }}</td>
+        <td>{{ p.authority_to_confirm or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">No procedural path can be evaluated for this matter yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel-body"><p class="sub">Availability means this system found no recorded
+    obstacle — not legal advice that a path is available, and no prediction of how it
+    would be decided. Full picture, with the relationship graph: <a href="/atlas?matter_id={{ data.matter.id }}">Path Atlas</a>.</p></div>
+</section>
+
+<!-- ============================================================ 2. staged packet -->
+<section class="panel" style="margin-top:.9rem">
+  <header class="panel-head"><h2>Staged packet</h2>
+    <span class="spacer"></span>
+    <span class="chip">{{ data.staged_packet | length }} document(s)</span>
+  </header>
+  <div class="panel-body flush table-wrap">
+    <table class="tbl">
+      <thead><tr><th>Document</th><th>Role</th><th>Folder</th><th>Triage</th><th>Filing title</th><th>Last updated</th></tr></thead>
+      <tbody>
+      {% for item in data.staged_packet %}
+      <tr>
+        <td>{% if item.doc_uid %}<a href="/document?id={{ item.document_id }}">{{ item.doc_uid }}</a>
+              <div class="sub">{{ item.document_title }}</div>
+            {% else %}<span class="chip gap">no document linked</span>{% endif %}</td>
+        <td>{% if item.filing_type %}<span class="chip info">{{ item.filing_type }}</span>
+            {% else %}<span class="chip gap">role not recorded</span>{% endif %}</td>
+        <td>{{ item.folder or '—' }}</td>
+        <td>{{ item.triage_status or '—' }}</td>
+        <td>{{ item.filing_title }}</td>
+        <td>{{ item.updated_at[:10] if item.updated_at else '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">Nothing is staged. No filing for this matter is
+        currently marked DRAFT — that is a statement about the record, not about the case.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================ 3. smart checklist -->
+<section class="panel" style="margin-top:.9rem">
+  <header class="panel-head"><h2>Smart checklist</h2>
+    <span class="spacer"></span>
+    {% if data.checklist.ok %}<span class="chip ok">no blockers</span>
+    {% else %}<span class="chip danger">{{ data.checklist.blockers | length }} blocker(s)</span>{% endif %}
+    <span class="chip">{{ data.checklist.advisory | length }} advisory</span>
+  </header>
+  <div class="panel-body">
+    <p class="sub">Runs completeness, conflict, defense, preservation, and source checks
+      against this matter's actual record.
+      {% if data.checklist.draft_text_used %}
+        Completeness was checked against the text of
+        <strong>{{ data.checklist.draft_document.title }}</strong>, the most recently
+        updated staged draft document.
+      {% else %}
+        No staged draft has readable extracted text, so the completeness check ran
+        against the record only — it did not scan any draft language, and reports no
+        BLOCKER for an issue simply missing from a draft it never read.
+      {% endif %}
+    </p>
+
+    {# Findings are grouped by which check raised them and collapsed behind a
+       count. Seventeen issues times five checks is sixty-eight findings, and a
+       flat list of sixty-eight is not a checklist — it is a wall, and a wall
+       gets skimmed. Every group states its full count in the summary, so
+       nothing is hidden: the reader chooses what to open, and the page never
+       implies there is less here than there is. Blocking groups start open. #}
+    {% if data.checklist.blockers %}
+    <h3 class="check-head danger">Blocking — {{ data.checklist.blockers | length }}</h3>
+    {% for check, findings in data.checklist.blockers | groupby('check') %}
+      <details class="check-group" open>
+        <summary><span class="chip danger">{{ check }}</span>
+          {{ findings | length }} blocking finding{{ '' if findings|length == 1 else 's' }}</summary>
+        <ul class="tight">
+          {% for f in findings %}
+          <li><strong>{{ f.title }}</strong>
+            <div class="sub">{{ f.detail }}</div>
+            {% if f.remedy %}<div class="sub">Remedy: {{ f.remedy }}</div>{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endfor %}
+    {% endif %}
+
+    {% if data.checklist.advisory %}
+    <h3 class="check-head">Advisory — {{ data.checklist.advisory | length }}</h3>
+    {% for check, findings in data.checklist.advisory | groupby('check') %}
+      <details class="check-group">
+        <summary><span class="chip {{ 'warn' if findings[0].severity == 'WARNING' else 'info' }}">{{ check }}</span>
+          {{ findings | length }} advisory finding{{ '' if findings|length == 1 else 's' }}</summary>
+        <ul class="tight">
+          {% for f in findings %}
+          <li><strong>{{ f.title }}</strong>
+            <div class="sub">{{ f.detail }}</div>
+            {% if f.remedy %}<div class="sub">Remedy: {{ f.remedy }}</div>{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endfor %}
+    {% endif %}
+
+    {% if not data.checklist.blockers and not data.checklist.advisory %}
+    <p class="empty">No findings. That means every check ran clean against what is
+      currently in the record — it is not a statement that the matter has nothing left to do.</p>
+    {% endif %}
+  </div>
+</section>
+
+<div class="grid two" style="margin-top:.9rem">
+  <!-- ========================================================== 4. draft queue -->
+  <div class="panel">
+    <header class="panel-head"><h2>Draft queue</h2>
+      <span class="spacer"></span><span class="chip">{{ data.draft_queue | length }}</span></header>
+    <div class="panel-body flush table-wrap">
+      <table class="tbl">
+        <thead><tr><th>Filing</th><th>Status</th><th>Document</th><th>Last updated</th></tr></thead>
+        <tbody>
+        {% for f in data.draft_queue %}
+        <tr>
+          <td>{{ f.title }}{% if f.filing_type %}<div class="sub">{{ f.filing_type }}</div>{% endif %}</td>
+          <td><span class="chip {{ 'warn' if f.filing_status in ('SENT','FILED_UNCONFIRMED') else 'info' }}">{{ f.filing_status }}</span></td>
+          <td>{{ f.doc_uid or '—' }}</td>
+          <td>{{ f.updated_at[:10] if f.updated_at else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="empty">No filing for this matter is currently in
+          preparation.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ========================================================== 5. status tracker -->
+  <div class="panel">
+    <header class="panel-head"><h2>Status tracker</h2>
+      <span class="spacer"></span><span class="chip">{{ data.status_tracker | length }}</span></header>
+    <div class="panel-body flush table-wrap">
+      <table class="tbl">
+        <thead><tr><th>Filing</th><th>Stage</th><th>Proof</th></tr></thead>
+        <tbody>
+        {% for f in data.status_tracker %}
+        <tr>
+          <td>{{ f.title }}{% if f.docket_number %}<div class="sub">docket {{ f.docket_number }}</div>{% endif %}</td>
+          <td>
+            {% if f.unproven_confirmation %}<span class="chip danger">{{ f.filing_status }} — UNPROVEN</span>
+            {% elif f.is_confirmed %}<span class="chip ok">{{ f.filing_status }}</span>
+            {% elif f.filing_status in ('REJECTED','SUPERSEDED') %}<span class="chip danger">{{ f.filing_status }}</span>
+            {% else %}<span class="chip">{{ f.filing_status }}</span>{% endif %}
+            <div class="sub">stage {{ f.stage_index + 1 }} of {{ f.stage_count }}</div>
+          </td>
+          <td>
+            {% if f.is_confirmed %}
+              {% if f.has_proof %}
+                <span class="chip ok">{{ f.proof_type }}</span>
+                <div class="sub">{{ f.proof_document_id and ('doc #' ~ f.proof_document_id) or f.proof_reference }}</div>
+              {% else %}
+                <span class="chip danger">no proof on record</span>
+                <div class="sub missing">A folder copy is never proof of filing.</div>
+              {% endif %}
+            {% else %}
+              <span class="muted">not yet confirmed</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="empty">No filing recorded for this matter.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block inspector_title %}Reading this screen{% endblock %}
+{% block inspector %}
+  <div id="fs-inspector"></div>
+  <div class="ins-card"><h4>"Filed" versus "in the folder"</h4>
+    <p>A document sitting in a litigation folder, a Drive share, or an inbox has not been
+       filed with anything. "Filed" means the tribunal's docket or clerk has recorded
+       receiving it. This screen keeps those two facts visibly separate: a document can be
+       staged for a filing while the filing itself is nowhere near confirmed.</p></div>
+
+  <div class="ins-card stop"><h4>Why a confirmed status needs docket proof</h4>
+    <p>FILED_CONFIRMED, DOCKETED, and ENTERED all assert that the record shows the filing
+       reached the tribunal. The database will not accept one of those statuses without a
+       proof_type and either a proof document or a proof reference — a docket entry, clerk
+       confirmation, stamped copy, electronic receipt, official order, or verified service
+       receipt. If a filing on this screen shows a confirmed status with no proof, that is
+       flagged loudly rather than trusted.</p></div>
+
+  <div class="ins-card"><h4>What preservation means</h4>
+    <p>An issue is "preserved" when it was raised below, a ruling was requested, and the
+       record shows either a ruling or the deliberate absence of one. An issue never raised
+       is usually not reviewable on appeal at all, no matter how strong it was.</p></div>
+
+  <div class="ins-card warn"><h4>Why there is no Take Action button here</h4>
+    <p>Filing Studio prepares a filing against the record — it checks prerequisites,
+       assembles a packet, and runs the anti-omission checklist. It does not file, serve, or
+       transmit anything, and there is no code path here that could: no send action, no
+       email, no API call to a court system. Filing is a decision this system will never
+       make for you.</p></div>
+
+  <div class="ins-card good"><h4>Why there is no likelihood column</h4>
+    <p>This screen reports whether a prerequisite is met, not whether a filing would
+       succeed. A "Likely Response" or success-probability column would be a forecast about
+       how a tribunal will rule, dressed as data. Nothing here predicts an outcome.</p></div>
+{% endblock %}

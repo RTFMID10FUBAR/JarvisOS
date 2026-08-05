@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Health — Case Command{% endblock %}
+{% block content %}
+<h1>System Health — {{ report.overall }}</h1>
+<p class="sub">{{ report.counts.ok }} ok · {{ report.counts.warn }} warning(s) ·
+   {{ report.counts.fail }} failure(s) · checked {{ report.checked_at }}</p>
+<p class="sub">Data root {{ report.data_root }}<br>Database {{ report.database }}</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Status</th><th>Check</th><th>Detail</th></tr>
+  {% for c in report.checks %}
+  <tr>
+    <td><span class="chip {{ 'ok' if c.status == 'OK' else 'warn' if c.status == 'WARN' else 'urgent' }}">{{ c.status }}</span></td>
+    <td>{{ c.check }}</td>
+    <td>{{ c.detail }}
+      {% if c.failures %}
+        <ul class="tight">{% for f in c.failures %}<li>{{ f.path }} — {{ f.error }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if c.folders %}
+        <ul class="tight">{% for f in c.folders %}<li>{{ f }}</li>{% endfor %}</ul>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}

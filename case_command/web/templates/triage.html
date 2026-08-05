@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% block title %}Document Center — Case Command{% endblock %}
+{% block heading %}Document Center{% endblock %}
+{% block content %}
+
+<p class="sub">{{ data.total }} document(s) matching the current filters, out of {{ overview.total }} in the
+   record · {{ data.unreviewed }} unreviewed · {{ data.duplicate_groups }} duplicate group(s) among them ·
+   {{ data.undated_count }} undated. The extract column is a line lifted <strong>verbatim</strong> from the
+   document, with the locator it came from — no model wrote it. Triage never deletes: a status change is
+   recorded and the document stays in the record, still searchable, still linked.</p>
+
+<form class="filters" method="get" action="/triage">
+  <label>Matter
+    <select name="matter_id">
+      <option value="">all</option>
+      {% for m in matters %}
+      <option value="{{ m.id }}" {{ 'selected' if data.filters.matter_id == m.id }}>{{ m.title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Matter assignment
+    <select name="no_matter">
+      <option value="" {{ 'selected' if not data.filters.no_matter }}>all</option>
+      <option value="1" {{ 'selected' if data.filters.no_matter }}>unassigned only</option>
+    </select>
+  </label>
+  <label>Folder
+    <select name="folder">
+      <option value="">all</option>
+      {% for f in folders %}
+      <option value="{{ f }}" {{ 'selected' if data.filters.folder == f }}>{{ f }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Triage status
+    <select name="status">
+      <option value="">all</option>
+      {% for s in statuses %}
+      <option value="{{ s }}" {{ 'selected' if data.filters.status == s }}>{{ s }}
+        ({{ data.status_counts.get(s, 0) }})</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Verification
+    <select name="verification">
+      <option value="">all</option>
+      {% for v in verification_statuses %}
+      <option value="{{ v }}" {{ 'selected' if data.filters.verification == v }}>{{ v }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Has a date
+    <select name="has_date">
+      <option value="" {{ 'selected' if data.filters.has_date is none }}>all</option>
+      <option value="1" {{ 'selected' if data.filters.has_date == true }}>dated only</option>
+      <option value="0" {{ 'selected' if data.filters.has_date == false }}>undated only</option>
+    </select>
+  </label>
+  <label>OCR
+    <select name="ocr">
+      <option value="" {{ 'selected' if data.filters.ocr is none }}>all</option>
+      <option value="1" {{ 'selected' if data.filters.ocr == true }}>OCR used</option>
+      <option value="0" {{ 'selected' if data.filters.ocr == false }}>not OCR'd</option>
+    </select>
+  </label>
+  <label>Keyword in extract
+    <input type="text" name="keyword" value="{{ data.filters.keyword or '' }}" placeholder="text in the extract line">
+  </label>
+  <label>Copies
+    <select name="hide_copies">
+      <option value="" {{ 'selected' if data.filters.hide_copies != '1' }}>show duplicate copies</option>
+      <option value="1" {{ 'selected' if data.filters.hide_copies == '1' }}>hide duplicate copies</option>
+    </select>
+  </label>
+  <button class="primary" type="submit">Filter</button>
+  <a href="/triage"><button type="button">Reset</button></a>
+  <a href="/triage.csv"><button type="button">Export CSV</button></a>
+</form>
+
+{% macro row(e) %}
+  <tr>
+    <td><input type="checkbox" name="document_id" value="{{ e.id }}" aria-label="Select {{ e.doc_uid }}"></td>
+    <td>{% if e.date %}{{ e.date }}<div class="sub">{{ e.date_source }}</div>
+        {% else %}<span class="missing">—</span><div class="sub">{{ e.date_source }}</div>{% endif %}</td>
+    <td><a href="/document?id={{ e.id }}">{{ e.doc_uid }}</a></td>
+    <td>{{ e.title }}<div class="sub">{{ e.filename }}</div></td>
+    <td>{{ e.extract }}
+      {% if e.extract_locator %}<div class="sub">{{ e.extract_locator }}</div>{% endif %}</td>
+    <td>{{ e.folder }}</td>
+    <td>{{ e.matter or '—' }}</td>
+    <td><span class="chip {{ 'ok' if 'VERIFIED' in e.verification_status else 'danger' if e.verification_status == 'DISPUTED' else 'warn' }}">{{ e.verification_status }}</span></td>
+    <td><span class="chip {{ 'ok' if e.triage_status == 'KEEP' else 'danger' if e.triage_status in ('DUPLICATE','IRRELEVANT') else 'warn' }}">{{ e.triage_status }}</span>
+      {% if e.triage_note %}<div class="sub">{{ e.triage_note }}</div>{% endif %}
+      {% for flag in e.flags %}<span class="chip {{ 'danger' if flag in ('UNREADABLE','DUPLICATE') else 'info' if flag == 'FROM CONTAINER' else 'warn' }}">{{ flag }}</span>{% endfor %}</td>
+    <td>{% if e.ocr_used %}<span class="chip warn">OCR</span>{% endif %} {{ e.text_method or '—' }}</td>
+    <td class="num">{{ '{:,}'.format(e.byte_size) if e.byte_size is not none else '—' }}</td>
+    <td class="num">{{ e.copy_count }}</td>
+  </tr>
+{% endmacro %}
+
+<form method="post" action="/triage/bulk">
+<input type="hidden" name="redirect_to" value="{{ redirect_to }}">
+<input type="hidden" name="reviewer" value="jacob">
+
+<div class="filters" style="margin-bottom:.6rem">
+  <label>Set checked documents to
+    <select name="status">
+      {% for s in statuses %}
+      <option value="{{ s }}">{{ s }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Note (optional)
+    <input type="text" name="note" placeholder="why">
+  </label>
+  <button class="primary" type="submit">Apply to checked</button>
+  <span class="sub" style="align-self:center">This changes triage status only. Nothing is deleted or moved.</span>
+</div>
+
+<h2>Dated ({{ data.dated | length }})</h2>
+<div class="table-wrap">
+<table>
+  <tr>
+    <th><input type="checkbox" id="select-all-dated" aria-label="Select all dated"></th>
+    <th>Date</th><th>Doc ID</th><th>Title</th><th>Extract (verbatim)</th>
+    <th>Folder</th><th>Matter</th><th>Verification</th><th>Triage status</th>
+    <th>OCR / method</th><th>Bytes</th><th>Copies</th>
+  </tr>
+  {% for e in data.dated %}{{ row(e) }}{% endfor %}
+  {% if not data.dated %}<tr><td colspan="12" class="empty">No dated documents match the current filters.</td></tr>{% endif %}
+</table>
+</div>
+
+{% if data.undated %}
+<h2 style="margin-top:1rem">No date found ({{ data.undated | length }})</h2>
+<p class="sub">Listed separately rather than sorted to the top. An unknown date is not a date.</p>
+<div class="table-wrap">
+<table>
+  <tr>
+    <th><input type="checkbox" id="select-all-undated" aria-label="Select all undated"></th>
+    <th>Date</th><th>Doc ID</th><th>Title</th><th>Extract (verbatim)</th>
+    <th>Folder</th><th>Matter</th><th>Verification</th><th>Triage status</th>
+    <th>OCR / method</th><th>Bytes</th><th>Copies</th>
+  </tr>
+  {% for e in data.undated %}{{ row(e) }}{% endfor %}
+</table>
+</div>
+{% endif %}
+</form>
+
+<script>
+(function () {
+  function wire(headerId) {
+    var header = document.getElementById(headerId);
+    if (!header) return;
+    header.addEventListener('change', function () {
+      var table = header.closest('table');
+      table.querySelectorAll('input[name="document_id"]').forEach(function (cb) {
+        cb.checked = header.checked;
+      });
+    });
+  }
+  wire('select-all-dated');
+  wire('select-all-undated');
+})();
+</script>
+
+<section class="panel" style="margin-top:1rem">
+  <header><b>Duplicate queue</b><span class="spacer"></span>
+    <span class="chip">{{ duplicate_queue | length }} document(s) with a redundant copy</span></header>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Document</th><th>Date</th><th>What it is (verbatim)</th><th>Canonical location</th><th>Other physical locations</th></tr>
+    {% for g in duplicate_queue %}
+    <tr>
+      <td><a href="/document?id={{ g.document_id }}">{{ g.doc_uid }}</a></td>
+      <td>{{ g.date or '—' }}</td>
+      <td>{{ g.what_it_is or '(not yet extracted)' }}</td>
+      <td>{{ g.canonical_path }}</td>
+      <td>
+        {% for c in g.copies %}
+        <div>{{ c.path }} — <span class="chip {{ 'ok' if c.disposition == 'KEEP' else 'warn' if c.disposition == 'ARCHIVE_PROPOSED' else 'info' if c.disposition == 'ARCHIVED' else '' }}">{{ c.disposition }}</span>
+          {% if c.folder %}<span class="sub">{{ c.folder }}</span>{% endif %}</div>
+        {% endfor %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="empty">No document in the record currently has more than one physical copy on disk.</td></tr>
+    {% endfor %}
+  </table>
+  </div>
+</section>
+
+{% endblock %}
+
+{% block inspector_title %}Reading the Document Center{% endblock %}
+{% block inspector %}
+  <div class="ins-card {{ 'stop' if overview.no_date else 'good' }}"><h4>No date found</h4>
+    <p><b>{{ overview.no_date }} / {{ overview.total }}</b> documents have neither a filed date nor a
+       document date. They are listed separately below rather than sorted to the top or guessed at.</p></div>
+
+  <div class="ins-card {{ 'warn' if overview.no_matter else 'good' }}"><h4>No matter assigned</h4>
+    <p><b>{{ overview.no_matter }} / {{ overview.total }}</b> documents are not yet linked to a matter.
+       An unassigned document is still fully in the record; it just is not yet attached to a case.</p></div>
+
+  <div class="ins-card {{ 'warn' if overview.duplicate_groups else 'good' }}"><h4>Duplicates detected</h4>
+    <p><b>{{ overview.duplicate_groups }} / {{ overview.total }}</b> documents have at least one other
+       physical copy elsewhere in the tree ({{ overview.redundant_copies }} redundant copy location(s)
+       total). See the duplicate queue for exactly where. A duplicate is never deleted automatically —
+       only proposed for archive, and only a human decides.</p></div>
+
+  <div class="ins-card {{ 'stop' if overview.extraction_failed else 'good' }}"><h4>Text extraction failed</h4>
+    <p><b>{{ overview.extraction_failed }} / {{ overview.total }}</b> documents could not have their text
+       extracted. These say so plainly in the extract column rather than showing a blank.</p></div>
+
+  <div class="ins-card"><h4>UNREVIEWED / KEEP</h4>
+    <p>UNREVIEWED — not yet looked at. KEEP — a human confirmed it is real, relevant, and stays.</p></div>
+
+  <div class="ins-card"><h4>DUPLICATE / SUPERSEDED</h4>
+    <p>DUPLICATE — a byte-identical or superseded copy of another document. SUPERSEDED — an earlier
+       version of something that was later replaced. Neither removes the document from the record.</p></div>
+
+  <div class="ins-card"><h4>IRRELEVANT / ARCHIVE_PROPOSED</h4>
+    <p>IRRELEVANT — not related to any matter. ARCHIVE_PROPOSED — proposed for 99_ARCHIVE, awaiting a
+       move decision a human still has to make. Nothing is moved by setting this status.</p></div>
+
+  <div class="ins-card"><h4>Why there is no score</h4>
+    <p>Every number here is a count with a denominator, so it can be checked against the record. Triage
+       does not rate a document's importance and does not predict how it will be used.</p></div>
+{% endblock %}

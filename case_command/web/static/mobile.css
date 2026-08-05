@@ -1,0 +1,215 @@
+/* Case Command — phone.
+ *
+ * Designed for one hand, bright sunlight on a porch, and a courthouse hallway.
+ * Large tap targets, high contrast, and the connection state always visible:
+ * a page that quietly serves stale data during a hearing is worse than one
+ * that says it is offline.
+ */
+
+:root {
+  --bg: #070b14;
+  --panel: #0f1729;
+  --panel-2: #131d33;
+  --ink: #e6edf7;
+  --ink-dim: #93a4c0;
+  --muted: #64789a;
+  --line: #1c2941;
+  --accent: #38bdf8;
+  --danger: #f4585b;
+  --warn: #f4b03e;
+  --ok: #3ddc97;
+  --info: #8b7cf6;
+  --tap: 46px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+body.m {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------------------------ header */
+.m-top {
+  position: sticky; top: 0; z-index: 30;
+  background: rgba(7, 11, 20, .96);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+  padding: calc(.6rem + env(safe-area-inset-top)) .9rem .6rem;
+  display: flex; align-items: center; gap: .6rem;
+}
+.m-top h1 { font-size: 17px; margin: 0; font-weight: 650; flex: 1; }
+.m-top a.back { color: var(--accent); text-decoration: none; font-size: 22px; line-height: 1; }
+
+.conn {
+  font-size: 11px; font-weight: 700; padding: .16rem .5rem;
+  border-radius: 999px; border: 1px solid var(--line); white-space: nowrap;
+}
+.conn.on { color: var(--ok); border-color: rgba(61,220,151,.4); }
+.conn.off { color: var(--warn); border-color: rgba(244,176,62,.5); background: rgba(244,176,62,.1); }
+
+.m-wrap { padding: .8rem .9rem 1rem; }
+
+/* ----------------------------------------------------------------- mission */
+.m-mission {
+  border: 1px solid var(--line); border-left: 4px solid var(--accent);
+  border-radius: 14px; background: var(--panel); padding: .85rem .9rem;
+  margin-bottom: .8rem;
+}
+.m-mission.urgent { border-left-color: var(--danger); }
+.m-mission .k {
+  font-size: 10px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--accent); font-weight: 800; margin-bottom: .25rem;
+}
+.m-mission.urgent .k { color: var(--danger); }
+.m-mission b { font-size: 17px; display: block; line-height: 1.3; }
+.m-mission .why { font-size: 13.5px; color: var(--ink-dim); margin-top: .25rem; }
+
+.countdown {
+  font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums;
+  color: var(--ok); line-height: 1.1; margin: .3rem 0;
+}
+.countdown.urgent { color: var(--warn); }
+.countdown.over { color: var(--danger); }
+
+/* -------------------------------------------------------------- stat tiles */
+.m-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin-bottom: .8rem; }
+.m-tile {
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+  padding: .6rem .5rem; text-align: center; text-decoration: none; color: inherit;
+  display: block;
+}
+.m-tile .v { font-size: 26px; font-weight: 800; line-height: 1; }
+.m-tile .k {
+  font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--muted); margin-top: .25rem; font-weight: 700;
+}
+.m-tile.danger { border-color: rgba(244,88,91,.45); background: rgba(244,88,91,.08); }
+.m-tile.danger .v { color: var(--danger); }
+.m-tile.warn { border-color: rgba(244,176,62,.4); background: rgba(244,176,62,.08); }
+.m-tile.warn .v { color: var(--warn); }
+.m-tile.info .v { color: var(--info); }
+
+/* -------------------------------------------------------------------- rows */
+.m-section {
+  font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--muted); font-weight: 800; margin: 1.1rem 0 .45rem;
+}
+.m-list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.m-row {
+  display: flex; align-items: center; gap: .7rem; justify-content: space-between;
+  padding: .7rem .8rem; border-bottom: 1px solid var(--line);
+  text-decoration: none; color: inherit; min-height: var(--tap);
+}
+.m-list .m-row:last-child { border-bottom: 0; }
+.m-row:active { background: var(--panel-2); }
+.m-row b { font-size: 14.5px; font-weight: 600; display: block; line-height: 1.35; }
+.m-sub { font-size: 12px; color: var(--muted); margin-top: .12rem; }
+
+.m-chip {
+  font-size: 10.5px; font-weight: 700; padding: .14rem .45rem; border-radius: 6px;
+  border: 1px solid var(--line); color: var(--ink-dim); background: var(--panel-2);
+  white-space: nowrap; flex: 0 0 auto;
+}
+.m-chip.ok { color: var(--ok); border-color: rgba(61,220,151,.4); background: rgba(61,220,151,.09); }
+.m-chip.warn { color: var(--warn); border-color: rgba(244,176,62,.4); background: rgba(244,176,62,.09); }
+.m-chip.danger { color: var(--danger); border-color: rgba(244,88,91,.4); background: rgba(244,88,91,.09); }
+.m-chip.info { color: var(--info); border-color: rgba(139,124,246,.4); background: rgba(139,124,246,.09); }
+.m-chip.gap { color: var(--danger); border: 1px dashed rgba(244,88,91,.55); background: transparent; }
+
+.m-empty { color: var(--muted); font-size: 13.5px; font-style: italic; padding: .9rem .8rem; margin: 0; }
+.m-stamp {
+  font-size: 11.5px; color: var(--muted); padding: .5rem .8rem;
+  border-bottom: 1px solid var(--line); background: var(--panel-2);
+}
+
+/* ------------------------------------------------------------------- forms */
+.m-field { margin-bottom: .7rem; }
+.m-field label {
+  display: block; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); font-weight: 800; margin-bottom: .3rem;
+}
+.m-field input, .m-field select, .m-field textarea {
+  width: 100%; font: inherit; font-size: 16px;   /* 16px stops iOS zooming on focus */
+  padding: .65rem .7rem; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  min-height: var(--tap);
+}
+.m-field textarea { min-height: 84px; resize: vertical; }
+
+.m-btn {
+  display: flex; align-items: center; justify-content: center; gap: .45rem;
+  width: 100%; min-height: 50px; border-radius: 12px; font-size: 16px; font-weight: 700;
+  border: 1px solid var(--accent); background: var(--accent); color: #04101f;
+  cursor: pointer; text-decoration: none;
+}
+.m-btn:active { opacity: .85; }
+.m-btn.ghost { background: transparent; color: var(--accent); }
+.m-btn.danger { background: transparent; color: var(--danger); border-color: rgba(244,88,91,.6); }
+
+.m-capture {
+  border: 2px dashed var(--line); border-radius: 14px; padding: 1.4rem .9rem;
+  text-align: center; background: var(--panel); margin-bottom: .8rem;
+}
+.m-capture .big { font-size: 34px; }
+.m-capture input[type=file] { display: none; }
+.m-capture label.shot {
+  display: block; cursor: pointer; color: var(--accent); font-weight: 700;
+  margin-top: .5rem; min-height: var(--tap); line-height: var(--tap);
+}
+
+/* --------------------------------------------------------------- doc text */
+.m-doc {
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+  padding: .8rem; font-size: 14.5px; line-height: 1.65;
+  white-space: pre-wrap; word-break: break-word; color: var(--ink-dim);
+  max-height: 70vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+
+.m-note {
+  border: 1px solid var(--line); border-left: 3px solid var(--info);
+  border-radius: 10px; background: var(--panel-2); padding: .6rem .75rem;
+  font-size: 13px; color: var(--ink-dim); margin-bottom: .7rem;
+}
+.m-note.warn { border-left-color: var(--warn); }
+.m-note.danger { border-left-color: var(--danger); }
+
+/* -------------------------------------------------------------- tab bar */
+.m-tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  background: rgba(7, 11, 20, .97); backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.m-tabs a {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .15rem; padding: .5rem .2rem; min-height: 58px;
+  color: var(--muted); text-decoration: none; font-size: 10px; font-weight: 700;
+}
+.m-tabs a .ico { font-size: 19px; line-height: 1; }
+.m-tabs a.on { color: var(--accent); }
+
+/* --------------------------------------------------------------- toast */
+.m-toast {
+  position: fixed; left: 50%; transform: translate(-50%, 20px);
+  bottom: calc(78px + env(safe-area-inset-bottom));
+  background: var(--panel-2); border: 1px solid var(--line);
+  color: var(--ink); padding: .6rem .9rem; border-radius: 10px;
+  font-size: 13.5px; z-index: 60; opacity: 0; pointer-events: none;
+  transition: opacity .2s, transform .2s; max-width: 88vw; text-align: center;
+}
+.m-toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* An offline document must never be mistaken for a live one. */
+html[data-online="no"] .m-top { border-bottom-color: rgba(244,176,62,.5); }
+html[data-online="no"] .m-top::after {
+  content: "No connection — showing the copy saved on this device";
+  position: absolute; left: 0; right: 0; top: 100%;
+  background: rgba(244,176,62,.14); color: var(--warn);
+  font-size: 11.5px; font-weight: 700; text-align: center; padding: .25rem .5rem;
+}

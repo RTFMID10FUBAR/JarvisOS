@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Issue Matrix — Case Command{% endblock %}
+{% block content %}
+<h1>Issue Matrix</h1>
+<p class="sub">{{ data.count }} issue(s) · {{ data.complete }} with no gaps.
+   A blank column is shown as an explicit gap, never as an implied answer.
+   No issue is ever deleted — only re-statused.</p>
+
+<form class="filters" method="get" action="/issues">
+  <label>Matter
+    <select name="matter_id" onchange="this.form.submit()">
+      <option value="">all matters</option>
+      {% for m in data.matters %}
+      <option value="{{ m.id }}" {{ 'selected' if data.matter_id == m.id }}>{{ m.title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="primary" type="submit">Filter</button>
+</form>
+
+<div class="table-wrap">
+<table>
+  <tr>
+    <th>Issue</th><th>Legal element</th><th>Verified facts</th><th>Disputed facts</th>
+    <th>Inference</th><th>Authority</th><th>Evidence</th><th>Opponent defense</th>
+    <th>Best reply</th><th>Missing proof</th><th>Requested finding</th>
+    <th>Requested relief</th><th>Preservation</th><th>Appeal standard</th><th>Risk</th>
+  </tr>
+  {% for row in data.matrix %}
+  {% set i = row.issue %}
+  <tr>
+    <td>
+      <strong>{{ i.issue_key or i.id }}</strong><br>{{ i.title }}<br>
+      <span class="chip">{{ i.status }}</span>
+      {% if i.protected %}<span class="chip ok">protected</span>{% endif %}
+      <div class="sub">{{ i.boundary_classification }}</div>
+    </td>
+    <td>{{ row.legal_element or '' }}{% if not row.legal_element %}<span class="chip gap">missing</span>{% endif %}</td>
+    <td>{% for f in row.verified_facts %}<div>{{ f.title }}
+          <span class="chip ok">{{ f.verification_status }}</span></div>
+        {% else %}<span class="chip gap">none</span>{% endfor %}</td>
+    <td>{% for f in row.disputed_facts %}<div>{{ f.title }}</div>{% else %}—{% endfor %}</td>
+    <td>{{ row.inference or '—' }}</td>
+    <td>{% for a in row.authority %}<div>{{ a.citation or a.title }}
+          {% if not a.citation_verified %}<span class="chip warn">unverified cite</span>{% endif %}</div>
+        {% else %}<span class="chip gap">none</span>{% endfor %}</td>
+    <td>{% for e in row.evidence %}<div>{{ e.exhibit_number or '' }} {{ e.title }}</div>
+        {% else %}<span class="chip gap">none</span>{% endfor %}</td>
+    <td>{% for d in row.opponent_defense %}<div>{{ d.title }}</div>
+        {% else %}<span class="chip gap">not red-teamed</span>{% endfor %}</td>
+    <td>{{ row.best_reply or '' }}{% if not row.best_reply %}<span class="chip gap">missing</span>{% endif %}</td>
+    <td>{% if row.missing_proof %}<span class="missing">{{ row.missing_proof }}</span>{% else %}—{% endif %}</td>
+    <td>{{ row.requested_finding or '' }}{% if not row.requested_finding %}<span class="chip gap">missing</span>{% endif %}</td>
+    <td>{{ row.requested_relief or '' }}{% if not row.requested_relief %}<span class="chip gap">missing</span>{% endif %}</td>
+    <td><span class="chip {{ 'urgent' if 'AT RISK' in row.preservation_status else 'ok' if row.preservation_status == 'RAISED' else 'warn' }}">{{ row.preservation_status }}</span></td>
+    <td>{{ row.appeal_standard or '' }}{% if not row.appeal_standard %}<span class="chip gap">missing</span>{% endif %}</td>
+    <td>{{ row.risk_rating }}<div class="sub">{{ row.gaps | length }} gap(s)</div></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="15" class="empty">No issues.</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}

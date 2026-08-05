@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Access Log{% endblock %}
+{% block heading %}Access Log — what prevented a filing{% endblock %}
+{% block content %}
+
+<div class="banner">
+  A tribunal that requires hand delivery or mail requires printing, which requires
+  electricity. When the loss of electricity is itself the subject of the proceeding,
+  the filing requirement and the injury are the same fact. Every entry here links to
+  <b>PSC-020</b> and <b>PSC-021</b>. Nothing on this page is generated — each row is
+  one you entered.
+</div>
+
+<form class="filters" method="get" action="/access">
+  <label>Matter
+    <select name="matter_id" onchange="this.form.submit()">
+      <option value="">all matters</option>
+      {% for m in matters %}
+      <option value="{{ m.id }}" {{ 'selected' if matter_id == m.id }}>{{ m.title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="primary" type="submit">Filter</button>
+</form>
+
+<div class="alerts">
+  <div class="alert {{ 'danger' if summary.count else 'calm' }}">
+    <div class="k">Incidents logged</div><div class="v">{{ summary.count }}</div>
+    <div class="s">{{ summary.date_range or 'none recorded' }}</div>
+  </div>
+  <div class="alert {{ 'danger' if summary.deadlines_affected else 'calm' }}">
+    <div class="k">Deadlines affected</div><div class="v">{{ summary.deadlines_affected or 0 }}</div>
+    <div class="s">A blocked filing with a date</div>
+  </div>
+  <div class="alert {{ 'warn' if summary.without_supporting_document else 'ok' }}">
+    <div class="k">Without proof</div><div class="v">{{ summary.without_supporting_document or 0 }}</div>
+    <div class="s">Contemporaneous statement only</div>
+  </div>
+  <div class="alert {{ 'warn' if summary.not_reported_to_tribunal else 'ok' }}">
+    <div class="k">Not reported</div><div class="v">{{ summary.not_reported_to_tribunal or 0 }}</div>
+    <div class="s">Tribunal never told</div>
+  </div>
+  <div class="alert calm">
+    <div class="k">Hours lost</div><div class="v">{{ summary.total_hours_lost or 0 }}</div>
+    <div class="s">As entered</div>
+  </div>
+  <div class="alert calm">
+    <div class="k">Cost incurred</div><div class="v">${{ '%.2f' % (summary.total_cost_incurred or 0) }}</div>
+    <div class="s">As entered</div>
+  </div>
+</div>
+
+{% if summary.gaps %}
+<div class="panel warn" style="margin-bottom:.8rem">
+  <div class="panel-head"><h2>Gaps in this record</h2></div>
+  <div class="panel-body">
+    <ul class="tight">{% for g in summary.gaps %}<li>{{ g }}</li>{% endfor %}</ul>
+    <p class="sub">Reported so they can be fixed before this record is relied on.</p>
+  </div>
+</div>
+{% endif %}
+
+<div class="panel">
+  <div class="panel-head"><h2>Incidents</h2><span class="spacer"></span>
+    <span class="sub">Add with <code>case-command access log</code></span></div>
+  <div class="panel-body flush">
+    <div class="table-wrap"><table>
+      <tr><th>Date</th><th>Barrier</th><th>What it blocked</th><th>Deadline</th>
+          <th>Workaround</th><th>Reported</th><th>Proof</th><th>Status</th></tr>
+      {% for b in barriers %}
+      <tr>
+        <td>{{ b.incident_date or '—' }}</td>
+        <td><span class="chip danger">{{ b.barrier_type }}</span>
+          <div class="sub">{{ barrier_labels.get(b.barrier_type, '') }}</div></td>
+        <td>{{ b.what_was_blocked }}</td>
+        <td>{% if b.deadline_affected %}{{ b.deadline_affected }}
+              <div class="sub">{{ b.deadline_date or 'no date' }}</div>
+            {% else %}<span class="chip gap">none named</span>{% endif %}</td>
+        <td class="sub">{{ b.workaround_attempted or '—' }}
+          {% if b.workaround_result %}<div>→ {{ b.workaround_result }}</div>{% endif %}</td>
+        <td>{% if b.reported_to_tribunal %}<span class="chip ok">yes</span>
+              <div class="sub">{{ b.how_reported or '' }}</div>
+            {% else %}<span class="chip warn">no</span>{% endif %}</td>
+        <td>{% if b.evidence_uid %}<span class="chip ok">{{ b.evidence_uid }}</span>
+            {% else %}<span class="chip gap">none attached</span>{% endif %}</td>
+        <td><span class="chip {{ 'ok' if 'VERIFIED' in b.verification_status else 'warn' }}">{{ b.verification_status }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="empty">
+        No access barriers recorded. If a filing was ever prevented or delayed, log it —
+        a contemporaneous entry carries weight that a later reconstruction does not.
+      </td></tr>
+      {% endfor %}
+    </table></div>
+  </div>
+</div>
+
+<div class="grid two" style="margin-top:.8rem">
+  <div class="panel">
+    <div class="panel-head"><h2>How to log one</h2></div>
+    <div class="panel-body">
+<pre>case-command access log \
+  --date 2026-03-10 \
+  --type NO_ELECTRICITY \
+  --blocked "Response to APCo Answer in PSC 26-0315" \
+  --deadline "Response due" --deadline-date 2026-03-15 \
+  --tried "Public library printer" \
+  --result "Library closed; could not print before deadline" \
+  --hours 4 --matter-id 2</pre>
+      <p class="sub"><code>--blocked</code> is required and rejects a blank. A general
+        statement of hardship is not evidence; a named filing with a date is.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>What makes an entry hold up</h2></div>
+    <div class="panel-body">
+      <div class="explain"><b>A named filing, not a feeling</b>
+        <p>"The response due March 15" beats "things were hard."</p></div>
+      <div class="explain"><b>Attached proof</b>
+        <p>A shutoff notice, a receipt, a failed e-filing confirmation. Without one
+           the entry stays UNKNOWN rather than verified.</p></div>
+      <div class="explain"><b>Told to the tribunal at the time</b>
+        <p>A barrier raised for the first time on appeal is much harder to rely on
+           than one the record already shows.</p></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
