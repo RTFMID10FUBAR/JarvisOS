@@ -95,12 +95,31 @@ A custom scheme rather than an `https` link on purpose: an https link needs a
 domain to verify against, and this system has no domain and no server on the
 internet.
 
-Typing still works, and has to — the link does nothing if the app is not
-installed on the phone reading the page, and a code has to be usable when
-somebody is holding a laptop and a phone that cannot see each other's screens.
-
 The code is minted when you press the button and not before, so a page left
 open in a tab is not a way in. It is single use and expires in ten minutes.
+
+### There is no code field in the app
+
+Not hidden, not optional — removed. The pairing screen has no text input at
+all, and an address field without a code field pairs nothing, so that is gone
+too. Opening the link *is* pressing the button: the app pairs on arrival and
+shows a progress bar, not a form.
+
+What this gives up is pairing from a code somebody reads to you. What it costs
+is nothing else: pairing now needs the phone to open the desktop's `/pair` page
+in its own browser, and the phone has to reach that same server immediately
+afterwards to sync at all — so it rules out no case that would otherwise have
+worked.
+
+If a link fails, the app says so and tells you to make a new code rather than
+offering a retry. A code is single use, so retrying the same one fails
+identically and looks like a broken app.
+
+`case_command/client.py` and `case-command conform` still take a code as an
+argument; they are not the phone, and a test harness needs to pair without a
+browser. The code stays on the web page too, folded away under *The code this
+link carries*, so you can see what was issued and match it against the paired
+devices list.
 
 ## Pairing once, not every time
 

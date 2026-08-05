@@ -80,20 +80,44 @@ class MainActivity : ComponentActivity() {
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * Pairing, with nothing to type.
+ *
+ * There is no code field and no address field, on purpose. A six-character
+ * code read off one screen and typed into another is the worst part of setting
+ * this up, and an address field without a code field pairs nothing — so both
+ * are gone and the link carries both values instead.
+ *
+ * The trade this makes: pairing now requires the phone to be able to open the
+ * desktop's /pair page in its own browser. That is the same requirement as
+ * pairing at all — the app has to reach that server afterwards regardless — so
+ * it rules out no case that would otherwise have worked. What it does rule out
+ * is pairing from a code somebody read to you over the phone.
+ */
 @Composable
 private fun PairScreen(
     store: SqliteStore,
     fromLink: Pair<String, String>? = null,
     onPaired: () -> Unit,
 ) {
-    // Prefilled when the app was opened by tapping the link on the desktop's
-    // /pair page. Typed by hand otherwise — the link is a convenience, not a
-    // requirement, and the app has to work when it is not available.
-    var host by remember { mutableStateOf(fromLink?.first ?: "http://") }
-    var code by remember { mutableStateOf(fromLink?.second ?: "") }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
+
+    // Arriving from a link is the whole gesture: opening the app *is* pressing
+    // the button, so there is no second press. Keyed on the link, so a fresh
+    // tap after a failure tries again and a recomposition does not.
+    LaunchedEffect(fromLink) {
+        val (host, code) = fromLink ?: return@LaunchedEffect
+        busy = true; error = null
+        val outcome = withContext(Dispatchers.IO) {
+            runCatching { CaseClient(host, store).pair(code, android.os.Build.MODEL ?: "Phone") }
+        }
+        busy = false
+        outcome.fold(
+            onSuccess = { store.setMeta("server", host); onPaired() },
+            onFailure = { error = it.message },
+        )
+    }
 
     Column(
         Modifier.fillMaxSize().background(Ink).padding(24.dp),
@@ -103,56 +127,50 @@ private fun PairScreen(
         Text("LITIGATION RECORD", color = Dim, fontSize = 11.sp, letterSpacing = 2.sp)
         Spacer(Modifier.height(28.dp))
 
-        Text(
-            if (fromLink != null) {
-                "Opened from a pairing link. The address and code below came " +
-                    "from it — check they look right and pair."
-            } else {
-                "On the desktop, open Case Command and go to Pair a device, " +
-                    "then open that page on this phone and tap the link. Or " +
-                    "type the address and the six-character code by hand."
-            },
-            color = if (fromLink != null) Good else Dim,
-            fontSize = 13.sp, lineHeight = 19.sp,
-        )
-        Spacer(Modifier.height(20.dp))
+        when {
+            busy -> {
+                Text("Pairing with ${fromLink?.first.orEmpty()}", color = Text, fontSize = 15.sp)
+                Spacer(Modifier.height(16.dp))
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
 
-        OutlinedTextField(
-            value = host, onValueChange = { host = it },
-            label = { Text("Server address") },
-            placeholder = { Text("http://192.168.1.20:8787") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = code, onValueChange = { code = it.uppercase().take(6) },
-            label = { Text("Pairing code") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(16.dp))
-
-        Button(
-            onClick = {
-                busy = true; error = null
-                scope.launch {
-                    val outcome = withContext(Dispatchers.IO) {
-                        runCatching { CaseClient(host.trim(), store).pair(code, android.os.Build.MODEL ?: "Phone") }
-                    }
-                    busy = false
-                    outcome.fold(
-                        onSuccess = { store.setMeta("server", host.trim()); onPaired() },
-                        onFailure = { error = it.message },
-                    )
+            error != null -> {
+                Text("That link did not pair.", color = Stop, fontSize = 15.sp,
+                     fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(12.dp))
+                Card(Modifier.fillMaxWidth(),
+                     colors = CardDefaults.cardColors(containerColor = Panel)) {
+                    Text(error.orEmpty(), color = Stop, fontSize = 13.sp,
+                         modifier = Modifier.padding(12.dp))
                 }
-            },
-            enabled = !busy && code.length == 6 && host.length > 8,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "Pairing…" else "Pair this device") }
+                Spacer(Modifier.height(16.dp))
+                // A code is single use and expires in ten minutes, so a second
+                // attempt needs a second code — retrying this one would fail
+                // the same way and look like the app is broken.
+                Text(
+                    "Go back to the Pair a device page, press the button again " +
+                        "for a new code, and tap the new link. A code works once " +
+                        "and expires after ten minutes.",
+                    color = Dim, fontSize = 13.sp, lineHeight = 19.sp,
+                )
+            }
 
-        error?.let {
-            Spacer(Modifier.height(12.dp))
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel)) {
-                Text(it, color = Stop, fontSize = 13.sp, modifier = Modifier.padding(12.dp))
+            else -> {
+                Text("Pair by tapping a link", color = Text, fontSize = 15.sp,
+                     fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "On the desktop, open Case Command and choose Pair a device. " +
+                        "Open that same page on this phone and tap the link on it. " +
+                        "The app opens already paired — there is no code to type " +
+                        "and no address to enter.",
+                    color = Dim, fontSize = 13.sp, lineHeight = 19.sp,
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "Both devices have to be on the same network.",
+                    color = Dim, fontSize = 13.sp, lineHeight = 19.sp,
+                )
             }
         }
 

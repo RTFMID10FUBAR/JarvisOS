@@ -2256,6 +2256,25 @@ class TestTapToPair(CaseCommandTest):
             api.redeem_pairing_code(
                 self.conn, code=code, label="Phone again", platform="android")
 
+    def test_the_app_has_nowhere_to_type_a_code(self):
+        """The Android app takes the code from the link and offers no field for
+        one. Asserted against the source because the screen cannot be rendered
+        here — and because it is a decision about the product, not an accident
+        of layout, so it should fail loudly if a text field creeps back in.
+        """
+        source = (Path(__file__).resolve().parents[2] / "clients" / "android" /
+                  "app" / "src" / "main" / "kotlin" / "casecommand" / "app" /
+                  "MainActivity.kt").read_text(encoding="utf-8")
+
+        pair_screen = source.split("private fun PairScreen")[1].split(
+            "private fun HomeScreen")[0]
+        for banned in ("OutlinedTextField", "TextField", "Pairing code",
+                       "Server address"):
+            self.assertNotIn(banned, pair_screen,
+                             f"the pairing screen is asking someone to type {banned!r}")
+        self.assertIn("LaunchedEffect", pair_screen,
+                      "arriving from a link should pair without a second press")
+
 
 class TestAndroidManifest(CaseCommandTest):
     """The manifest is the one file in the app that is wrong only at runtime.

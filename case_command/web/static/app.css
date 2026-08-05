@@ -545,9 +545,23 @@ tr.row-recalled td { background: rgba(217, 164, 65, .035); }
   border-radius: 10px;
   text-decoration: none;
 }
+/* It reads as a button, so it should not sprout an underline when a pointer
+   crosses it. `a:hover` up the file would give it one. */
+.pair-link:hover { text-decoration: none; background: #5b96ea; }
 /* An address has no spaces in it, so it will not break on its own and pushes
    the page sideways instead. */
 .pair-host { overflow-wrap: anywhere; }
+
+/* The code is no longer the way in — the link is. It is kept visible but
+   folded away, because a six-character code displayed at the size of a
+   headline reads as an instruction to type it, and there is nowhere left in
+   the app to type it into. */
+.pair-issued { margin: .9rem 0 .2rem; }
+.pair-issued > summary {
+  cursor: pointer; font-size: .82rem; color: var(--ink-dim, #8a9ab2);
+  padding: .3rem 0;
+}
+.pair-issued .pair-code { font-size: 1.6rem; padding: .4rem 0 .1rem; }
 
 /* This is the one page written to be opened on a phone, so it has to survive
    one. Measured at 390px: the address and the topbar's right-hand block both

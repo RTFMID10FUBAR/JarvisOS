@@ -22,9 +22,6 @@
         ten minutes, so a page left open in a tab is not a way in.
       </p>
     {% else %}
-      <div class="pair-code">{{ code }}</div>
-      <p class="sub">Single use. Expires in {{ ttl }} minutes.</p>
-
       <p>
         <a class="pair-link"
            href="casecommand://pair?host={{ host | urlencode }}&amp;code={{ code }}">
@@ -32,10 +29,23 @@
         </a>
       </p>
       <p class="sub">
-        Tap that on the phone and the app opens with the address and code
-        already filled in. If nothing happens, the app is not installed on this
-        device — type the code above into it instead.
+        Tap that <b>on the phone</b> and the app opens already paired. The
+        Android app has no field to type a code into, by design — the link
+        carries the address and the code, and opening it is the whole gesture.
+        If nothing happens, the app is not installed on the device you are
+        reading this on.
       </p>
+
+      <details class="pair-issued">
+        <summary>The code this link carries</summary>
+        <div class="pair-code">{{ code }}</div>
+        <p class="sub">
+          Single use, expires in {{ ttl }} minutes. Shown so you can see what
+          was issued and match it against the Paired devices list. The Android
+          app cannot accept it typed; the desktop reference client and
+          <code>case-command conform</code> can.
+        </p>
+      </details>
     {% endif %}
   </div>
 </section>
