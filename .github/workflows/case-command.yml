@@ -227,10 +227,13 @@ jobs:
             echo
             echo "Start the desktop, open **Pair a device** in the left rail,"
             echo "then open that same page **on the phone** and tap the link."
-            echo "The address and code come across with it — nothing to read"
-            echo "off one screen and type into another. Both devices have to"
-            echo "be on the same network. Typing the six characters by hand"
-            echo "still works if the link does not."
+            echo "The address and code come across with it and the app opens"
+            echo "already paired. Both devices have to be on the same network."
+            echo
+            echo "There is no code field in the app — it was removed, not"
+            echo "hidden. Opening the link is the whole gesture. If a link"
+            echo "fails, make a new code and tap the new link; a code works"
+            echo "once and expires after ten minutes."
             echo
             echo "### If it will not install over the last one"
             echo
