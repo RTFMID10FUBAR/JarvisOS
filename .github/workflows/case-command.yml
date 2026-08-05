@@ -223,9 +223,26 @@ jobs:
             echo "compiles, links, packages and signs. It does not prove that"
             echo "any screen renders correctly."
             echo
+            echo "### Pairing"
+            echo
+            echo "Start the desktop, open **Pair a device** in the left rail,"
+            echo "then open that same page **on the phone** and tap the link."
+            echo "The address and code come across with it — nothing to read"
+            echo "off one screen and type into another. Both devices have to"
+            echo "be on the same network. Typing the six characters by hand"
+            echo "still works if the link does not."
+            echo
+            echo "### If it will not install over the last one"
+            echo
+            echo "Uninstall the old one first. Until a stable signing key is"
+            echo "in use, CI signs every build with a fresh throwaway key, and"
+            echo "Android refuses to install an update signed by a different"
+            echo "key. Uninstalling wipes the app's data, so the phone has to"
+            echo "pair again — which is the part tapping a link makes cheap."
+            echo
             echo "It talks to one machine on your local network — the Case"
-            echo "Command desktop. Pair it with \`case-command device pair\`."
-            echo "No cloud, no account, and it cannot file or send anything."
+            echo "Command desktop. No cloud, no account, and it cannot file,"
+            echo "serve, or send anything to a tribunal."
           } > "$NOTES"
 
           gh release create android-debug \
