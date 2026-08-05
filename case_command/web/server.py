@@ -138,6 +138,7 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
             "/m/doc": self.m_doc,
             "/api/offline/bundle": self.api_offline_bundle,
             "/atlas": self.view_atlas,
+            "/pair": self.view_pair,
             "/filing": self.view_filing,
             "/access": self.view_access,
             "/triage": self.view_triage,
@@ -194,6 +195,8 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
                 return self.post_unpin(form)
             if parsed.path == "/m/pack":
                 return self.post_pack(form)
+            if parsed.path == "/pair":
+                return self.post_pair()
             if parsed.path == "/timeline/add":
                 return self.post_timeline_add(form)
             if parsed.path == "/timeline/proof":
@@ -706,6 +709,41 @@ class CaseCommandHandler(BaseHTTPRequestHandler):
                 error=self._str(params, "error"))
         finally:
             conn.close()
+
+    def view_pair(self, params: dict[str, list[str]]) -> None:
+        """The page you open on the phone to pair it.
+
+        Deliberately reachable from the phone rather than shown on the desktop:
+        if the phone can load this page, it can reach this server, which is the
+        one thing pairing actually needs to establish. The address it used to
+        get here is the address that goes into the link.
+        """
+        conn = self._conn()
+        try:
+            self._render("pair.html", conn, nav_active="pair", code=None,
+                         host=self._pair_host(), devices=api.list_devices(conn))
+        finally:
+            conn.close()
+
+    def post_pair(self) -> None:
+        conn = self._conn()
+        try:
+            result = api.create_pairing_code(conn, actor="web")
+            self._render("pair.html", conn, nav_active="pair",
+                         code=result["code"], ttl=result["ttl_minutes"],
+                         host=self._pair_host(), devices=api.list_devices(conn))
+        finally:
+            conn.close()
+
+    def _pair_host(self) -> str:
+        """The address the phone used to reach this server.
+
+        Taken from the request rather than guessed. A machine can have several
+        addresses and only some of them work from the phone; the one it just
+        used demonstrably does.
+        """
+        host = self.headers.get("Host") or f"127.0.0.1:{self.server.server_port}"
+        return f"http://{host}"
 
     def post_timeline_add(self, form: dict[str, list[str]]) -> None:
         """Add an event a person is entering by hand."""

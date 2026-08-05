@@ -2160,5 +2160,166 @@ class TestFilingStudio(CaseCommandTest):
         self.assertNotIn("Rejected filing", titles)
 
 
+class TestTapToPair(CaseCommandTest):
+    """Pairing by tapping a link instead of reading six characters across a room.
+
+    The page is served to the phone, so the address it used to get there is the
+    address that goes in the link — the one address known to work from where the
+    phone is standing.
+    """
+
+    def _start_server(self):
+        import threading
+        from http.server import ThreadingHTTPServer
+        from ..web.server import CaseCommandHandler, _jinja_env
+
+        handler = type("BoundHandler", (CaseCommandHandler,),
+                       {"config": self.config, "env": _jinja_env()})
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(thread.join, timeout=5)
+        return httpd.server_address[1]
+
+    def _request(self, port, method, host_header):
+        import urllib.request
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/pair", method=method,
+            data=b"" if method == "POST" else None)
+        request.add_header("Host", host_header)
+        with urllib.request.urlopen(request) as response:
+            return response.status, response.read().decode("utf-8")
+
+    def test_get_pair_offers_no_code_until_one_is_asked_for(self):
+        """A page left open in a tab is not a way in."""
+        port = self._start_server()
+        status, body = self._request(port, "GET", f"127.0.0.1:{port}")
+
+        self.assertEqual(status, 200)
+        self.assertIn("Create a pairing code", body)
+        self.assertNotIn("casecommand://", body)
+        self.assertEqual(
+            0, self.conn.execute("SELECT COUNT(*) c FROM pairing_codes").fetchone()["c"],
+            "merely viewing the page minted a code")
+
+    def test_link_carries_the_address_the_phone_actually_reached(self):
+        """Not 127.0.0.1, and not a guess from the machine's interface list — a
+        machine can have several addresses and only some of them work from the
+        phone. The one it just used demonstrably does.
+        """
+        import html
+        import re
+        from urllib.parse import parse_qs, urlsplit
+
+        port = self._start_server()
+        _, body = self._request(port, "POST", "192.168.1.50:8899")
+
+        match = re.search(r'href="(casecommand://[^"]+)"', body)
+        self.assertIsNotNone(match, "no pairing link on the page")
+        link = html.unescape(match.group(1))
+
+        parts = urlsplit(link)
+        # Both must match the manifest's <data android:scheme android:host>,
+        # or Android hands the tap to a browser and nothing happens.
+        self.assertEqual(parts.scheme, "casecommand")
+        self.assertEqual(parts.netloc, "pair")
+
+        query = parse_qs(parts.query)
+        self.assertEqual(query["host"][0], "http://192.168.1.50:8899")
+        self.assertRegex(query["code"][0], r"^[A-HJ-NP-Z2-9]{6}$")
+
+        row = self.conn.execute(
+            "SELECT code, used_at FROM pairing_codes").fetchone()
+        self.assertEqual(row["code"], query["code"][0],
+                         "the link carries a code the server will not accept")
+        self.assertIsNone(row["used_at"])
+
+    def test_the_linked_code_pairs_a_device_and_then_is_spent(self):
+        """End to end: the code in the link is redeemable exactly once."""
+        import html
+        import re
+        from urllib.parse import parse_qs, urlsplit
+        from .. import api
+
+        port = self._start_server()
+        _, body = self._request(port, "POST", f"127.0.0.1:{port}")
+        link = html.unescape(re.search(r'href="(casecommand://[^"]+)"', body).group(1))
+        code = parse_qs(urlsplit(link).query)["code"][0]
+
+        paired = api.redeem_pairing_code(
+            self.conn, code=code, label="Phone", platform="android")
+        self.assertTrue(paired["token"])
+
+        with self.assertRaises(api.ApiError):
+            api.redeem_pairing_code(
+                self.conn, code=code, label="Phone again", platform="android")
+
+
+class TestAndroidManifest(CaseCommandTest):
+    """The manifest is the one file in the app that is wrong only at runtime.
+
+    It compiles whatever you put in it. An attribute on the wrong element is
+    dropped without a word, and the app is broken on a phone while every build
+    stays green — which is exactly what happened to cleartext below.
+    """
+
+    def _manifest(self):
+        from xml.etree import ElementTree
+        path = (Path(__file__).resolve().parents[2] / "clients" / "android" /
+                "app" / "src" / "main" / "AndroidManifest.xml")
+        self.assertTrue(path.exists(), path)
+        return ElementTree.parse(path).getroot()
+
+    ANDROID = "{http://schemas.android.com/apk/res/android}"
+
+    def test_cleartext_is_permitted_where_the_attribute_is_read(self):
+        """`usesCleartextTraffic` is an <application> attribute. On <activity>
+        it is silently ignored, and since targetSdk 28 the default is to refuse
+        cleartext — so every request to the LAN server fails with "CLEARTEXT
+        communication not permitted" and no build ever complains.
+
+        This app talks plain HTTP to one machine on the local network, by
+        design: there is no public endpoint to secure and no certificate to
+        obtain for one. So it has to be permitted, and permitted where Android
+        actually looks.
+        """
+        root = self._manifest()
+        application = root.find("application")
+        self.assertIsNotNone(application)
+        self.assertEqual(application.get(f"{self.ANDROID}usesCleartextTraffic"), "true")
+
+        for activity in application.findall("activity"):
+            self.assertIsNone(
+                activity.get(f"{self.ANDROID}usesCleartextTraffic"),
+                "usesCleartextTraffic on <activity> does nothing; it belongs on "
+                "<application>")
+
+    def test_the_pairing_link_has_somewhere_to_land(self):
+        """The scheme and host in the manifest must be the ones the web page
+        writes into the link. If they drift apart the tap opens a browser, which
+        cannot do anything with a casecommand:// URL, and the failure looks like
+        the link being broken rather than the filter not matching.
+        """
+        root = self._manifest()
+        activity = root.find("application/activity")
+
+        matched = []
+        for intent_filter in activity.findall("intent-filter"):
+            for data in intent_filter.findall("data"):
+                if (data.get(f"{self.ANDROID}scheme") == "casecommand"
+                        and data.get(f"{self.ANDROID}host") == "pair"):
+                    categories = {c.get(f"{self.ANDROID}name")
+                                  for c in intent_filter.findall("category")}
+                    matched.append(categories)
+
+        self.assertEqual(len(matched), 1, "no casecommand://pair intent-filter")
+        # BROWSABLE is what lets a link in a browser start the app at all.
+        self.assertIn("android.intent.category.BROWSABLE", matched[0])
+        self.assertIn("android.intent.category.DEFAULT", matched[0])
+        self.assertEqual(activity.get(f"{self.ANDROID}exported"), "true")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

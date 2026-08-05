@@ -526,3 +526,79 @@ tr.row-recalled td { background: rgba(217, 164, 65, .035); }
 .check-group[open] > summary { border-bottom: 1px solid var(--line, #1e2a3d); }
 .check-group ul.tight { margin: 0; padding: .5rem .6rem .6rem 1.4rem; }
 .check-group ul.tight li { margin-bottom: .5rem; font-size: .8rem; }
+
+/* Pairing. The code is meant to be read across a room, and the link is meant
+   to be hit with a thumb. */
+.pair-code {
+  font: 700 2.6rem/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .35em;
+  color: var(--text, #e6edf7);
+  padding: .8rem 0 .2rem;
+}
+.pair-link {
+  display: inline-block;
+  margin: .5rem 0;
+  padding: .85rem 1.2rem;
+  background: var(--accent, #3b82f6);
+  color: #04121f;
+  font-weight: 600;
+  border-radius: 10px;
+  text-decoration: none;
+}
+/* An address has no spaces in it, so it will not break on its own and pushes
+   the page sideways instead. */
+.pair-host { overflow-wrap: anywhere; }
+
+/* This is the one page written to be opened on a phone, so it has to survive
+   one. Measured at 390px: the address and the topbar's right-hand block both
+   ran past the edge, and a page you have to scroll sideways to read is a poor
+   thing to hand somebody standing in a hallway. */
+@media (max-width: 700px) {
+  /* The 208px rail is a third of a phone screen, and everything it leaves
+     behind is too narrow to read. Lay it flat across the top instead — the
+     same links, scrolled sideways with a thumb, and the page keeps the full
+     width. */
+  .shell { display: block; }
+  .rail {
+    width: auto; flex: none; height: auto; position: static;
+    border-right: 0; border-bottom: 1px solid var(--line);
+  }
+  .rail nav {
+    flex-direction: row; overflow-x: auto; gap: .3rem;
+    padding: .45rem .6rem; -webkit-overflow-scrolling: touch;
+  }
+  .rail nav a { white-space: nowrap; }
+  .rail-group, .rail-status { display: none; }
+
+  .topbar { flex-wrap: wrap; row-gap: .35rem; }
+  .topbar .spacer { flex-basis: 100%; }
+  .topbar .who { text-align: left; }
+
+  /* The inspector explains the page. Above it, it is four screens of reading
+     before you reach the thing you came to do. */
+  .inspector { order: 1; }
+
+  .content { padding: .9rem .8rem 2rem; }
+
+  /* Filenames here are content hashes — 64 characters with nowhere to break,
+     so they push the page sideways rather than wrap. Approvals is full of
+     them. */
+  .content strong, .content code, .content td, .content h3, .content .sub {
+    overflow-wrap: anywhere;
+  }
+
+  /* A select sized to its longest option is wider than the screen. */
+  select, input[type="text"], input[type="search"], textarea { max-width: 100%; }
+  form.inline { flex-wrap: wrap; max-width: 100%; }
+}
+
+@media (max-width: 560px) {
+  /* Six characters, letter-spaced, have to fit — a code clipped at the fifth
+     character is worse than no code, because it looks like a whole one. */
+  .pair-code {
+    font-size: clamp(1.4rem, 8.2vw, 2.6rem);
+    letter-spacing: .18em;
+    white-space: nowrap;
+  }
+  .pair-link { display: block; text-align: center; padding: 1rem .8rem; }
+}

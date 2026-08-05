@@ -21,6 +21,16 @@ nothing more.
 signed artifact every push — but a build that compiles is not a screen that
 renders. Nothing here has been seen working on a phone.
 
+The manifest is where that gap bites hardest, because it compiles whatever you
+put in it. `android:usesCleartextTraffic="true"` sat on `<activity>`, where the
+attribute is not declared and is dropped without a word — and since targetSdk 28
+the default is to refuse cleartext, so every request to the LAN server would
+have failed with *CLEARTEXT communication not permitted*. Six green builds, an
+APK that installs, and an app that cannot talk to anything. It is now on
+`<application>`, and `TestAndroidManifest` in the Python suite parses the file
+and fails if it moves back — checked there because it is the suite that
+actually runs.
+
 ## Verifying the core
 
 ```sh
@@ -66,6 +76,31 @@ the disagreement is the finding.
 Revocation is driven by running the desktop command, because a device must not
 be able to revoke itself — there is no API endpoint for it. Without the third
 argument the rule reports **not run** rather than quietly passing.
+
+## Pairing by tapping
+
+Open the desktop's **Pair a device** page *on the phone*, press the button, tap
+the link. The app opens with the address and the code already in it.
+
+The address in that link is the one the phone used to load the page, taken from
+the request rather than guessed. A machine has several addresses and only some
+of them work from where the phone is standing; the one it just used
+demonstrably does. Nothing is read across a room and retyped.
+
+```
+casecommand://pair?host=http%3A//192.168.1.50%3A8899&code=8EURJ3
+```
+
+A custom scheme rather than an `https` link on purpose: an https link needs a
+domain to verify against, and this system has no domain and no server on the
+internet.
+
+Typing still works, and has to — the link does nothing if the app is not
+installed on the phone reading the page, and a code has to be usable when
+somebody is holding a laptop and a phone that cannot see each other's screens.
+
+The code is minted when you press the button and not before, so a page left
+open in a tab is not a way in. It is single use and expires in ten minutes.
 
 ## Pairing once, not every time
 

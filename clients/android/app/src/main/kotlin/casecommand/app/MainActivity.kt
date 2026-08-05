@@ -60,18 +60,37 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(background = Ink, surface = Panel)) {
-                if (store.meta("token") == null) PairScreen(store) { recreate() }
-                else HomeScreen(client, store)
+                if (store.meta("token") == null) {
+                    PairScreen(store, pairingLink(intent)) { recreate() }
+                } else {
+                    HomeScreen(client, store)
+                }
             }
         }
+    }
+
+    /** A pairing link that was tapped, if this launch came from one. */
+    private fun pairingLink(intent: android.content.Intent?): Pair<String, String>? {
+        val uri = intent?.data ?: return null
+        if (uri.scheme != "casecommand" || uri.host != "pair") return null
+        val host = uri.getQueryParameter("host")?.trim().orEmpty()
+        val code = uri.getQueryParameter("code")?.trim()?.uppercase().orEmpty()
+        return if (host.isNotBlank() && code.isNotBlank()) host to code else null
     }
 }
 
 // ---------------------------------------------------------------------------
 @Composable
-private fun PairScreen(store: SqliteStore, onPaired: () -> Unit) {
-    var host by remember { mutableStateOf("http://") }
-    var code by remember { mutableStateOf("") }
+private fun PairScreen(
+    store: SqliteStore,
+    fromLink: Pair<String, String>? = null,
+    onPaired: () -> Unit,
+) {
+    // Prefilled when the app was opened by tapping the link on the desktop's
+    // /pair page. Typed by hand otherwise — the link is a convenience, not a
+    // requirement, and the app has to work when it is not available.
+    var host by remember { mutableStateOf(fromLink?.first ?: "http://") }
+    var code by remember { mutableStateOf(fromLink?.second ?: "") }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -85,9 +104,16 @@ private fun PairScreen(store: SqliteStore, onPaired: () -> Unit) {
         Spacer(Modifier.height(28.dp))
 
         Text(
-            "On the desktop run  case-command device pair  and type the six " +
-                "characters it shows. The code works once and expires in ten minutes.",
-            color = Dim, fontSize = 13.sp, lineHeight = 19.sp,
+            if (fromLink != null) {
+                "Opened from a pairing link. The address and code below came " +
+                    "from it — check they look right and pair."
+            } else {
+                "On the desktop, open Case Command and go to Pair a device, " +
+                    "then open that page on this phone and tap the link. Or " +
+                    "type the address and the six-character code by hand."
+            },
+            color = if (fromLink != null) Good else Dim,
+            fontSize = 13.sp, lineHeight = 19.sp,
         )
         Spacer(Modifier.height(20.dp))
 

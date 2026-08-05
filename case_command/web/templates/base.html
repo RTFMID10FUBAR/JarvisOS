@@ -56,6 +56,8 @@
         {% if nav_counts and nav_counts.fleet %}<span class="count">{{ nav_counts.fleet }}</span>{% endif %}</a>
       <a href="/health" class="{{ 'on' if nav_active == 'health' }}">
         <span class="ico">◉</span> Health</a>
+      <a href="/pair" class="{{ 'on' if nav_active == 'pair' }}">
+        <span class="ico">▢</span> Pair a device</a>
     </nav>
 
     <div class="rail-status">
