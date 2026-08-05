@@ -8,18 +8,18 @@ desktop; it is not a browser pointed at the web UI. That difference is what the
 
 This matters more than usual here, so it is stated first and precisely.
 
-| Module | Built and tested in CI? | How |
+| Module | What is proven | How |
 |---|---|---|
-| `core/` — protocol, sync, store contract, conformance | **Yes** | `tools/build-core.sh`, using only the Kotlin compiler that ships inside Gradle. No Maven, no Android SDK, no network. |
-| `app/` — Compose UI, SQLite store, manifest | **No** | Needs the Android SDK and the Compose compiler plugin. Neither is available in the environment used to verify the core. |
+| `core/` — protocol, sync, store, conformance | **Behaviour.** 24 self checks and all twelve conformance rules against a live server | `tools/build-core.sh`, using only the Kotlin compiler inside Gradle. No Maven, no Android SDK, no network |
+| `app/` — Compose UI, SQLite store, manifest | **That it builds.** Compiles, links, packages, signs | The `apk` CI job, on a runner that has the SDK |
 
 That split is deliberate. Everything that could silently lose a document lives
-in `core` and is exercised against a live server. What is unverified in `app` is
-layout and SQL, not protocol.
+in `core` and is exercised against a real server. `app` is proven to build and
+nothing more.
 
-**Nobody has produced an APK from this yet.** The `app` module has never been
-compiled. Expect to fix build errors the first time you open it; do not treat it
-as working software until it builds and passes `:core:selfTest` on your machine.
+**The APK has never been run on a device.** CI produces a real, installable,
+signed artifact every push — but a build that compiles is not a screen that
+renders. Nothing here has been seen working on a phone.
 
 ## Verifying the core
 
@@ -66,6 +66,86 @@ the disagreement is the finding.
 Revocation is driven by running the desktop command, because a device must not
 be able to revoke itself — there is no API endpoint for it. Without the third
 argument the rule reports **not run** rather than quietly passing.
+
+## Pairing once, not every time
+
+You pair a device once. After that it holds a token and never asks again — that
+is how it was designed, and for a while it was not how it behaved.
+
+The cause was signing. Gradle signs a debug build with a keystore it generates
+on the spot if none exists, and a CI runner never has one, so **every build got
+a brand-new key.** The certificate in the first published APK gives it away:
+
+```
+Owner:      C=US, O=Android, CN=Android Debug
+Valid from: Tue Aug 04 12:41:12 UTC 2026
+```
+
+The build finished at 12:41:20. That key was made eight seconds earlier.
+
+Android refuses to install an APK over one signed with a different key, so every
+update meant uninstalling first — which wipes the app's data, including the
+paired token. Hence a pairing code every time. Nothing reported it: each APK was
+valid, signed, and installable. It just was never *the same app* as the one
+before it.
+
+### Fixing it, once
+
+The key is passed by environment, never committed — this repository is public,
+and a signing key in it would let anyone build an APK that Android would accept
+as an update to this one.
+
+**On your Mac.** The private key is generated here and stays here.
+
+```sh
+keytool -genkeypair -v \
+  -keystore casecommand.jks \
+  -alias casecommand \
+  -keyalg RSA -keysize 4096 -validity 10000 \
+  -dname "CN=Case Command, O=Kerr, C=US"
+```
+
+It asks for a password twice. Keep the file and the password somewhere you will
+still have them in five years — **if you lose them, you cannot update the app
+again without an uninstall**, which is the whole problem coming back.
+
+Then produce the value to paste into GitHub:
+
+```sh
+base64 -i casecommand.jks | tr -d '\n' | pbcopy   # now on your clipboard
+```
+
+**In the repository**, under *Settings → Secrets and variables → Actions → New
+repository secret*, add three:
+
+| Name | Value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | the clipboard contents |
+| `ANDROID_KEYSTORE_PASSWORD` | the password you chose |
+| `ANDROID_KEY_ALIAS` | `casecommand` |
+
+The next build signs with that key and prints its fingerprint. Copy that
+fingerprint into `clients/android/signing-key.sha256` and commit it — from then
+on CI **fails** if the signing key ever changes again, rather than quietly
+shipping an APK that cannot be installed over the last one.
+
+Until the secrets are set, builds still work; CI just warns that the key is a
+throwaway.
+
+### One last uninstall
+
+The APK already published is signed with one of the throwaway keys. Moving to
+the stable key means uninstalling once more and pairing once more. After that,
+updates install over the top and the pairing survives.
+
+### Checking a build yourself
+
+```sh
+python3 clients/android/tools/apk-signer.py case-command-debug.apk
+```
+
+Two APKs with the same fingerprint will install over each other. Two with
+different fingerprints will not.
 
 ## Building the APK
 
