@@ -29,7 +29,11 @@ concurrency:
 
 jobs:
   python:
-    name: Python — 157 acceptance tests
+    # No count in the name. It was "157 acceptance tests" while the suite ran
+    # 164, because a number written by hand in one place goes stale the first
+    # time somebody adds a test — and a check whose label is wrong is a small
+    # lesson that labels here need not be true.
+    name: Python — acceptance tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
